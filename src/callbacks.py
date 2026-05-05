@@ -60,22 +60,79 @@ def make_save_wandb_id_callback() -> Callable:
 def make_unfreeze_callback(
         unfreeze_epoch: int, lr_factor: float = 1.0
 ) -> Callable:
+    """Build an on_train_epoch_start callback that unfreezes the backbone.
+
+    Three Ultralytics-specific gotchas are handled here:
+
+    1. `trainer.freeze_layer_names` is reset to `[".dfl"]` so that
+       `BaseTrainer._model_train()` stops forcing previously-frozen
+       BatchNorm layers into eval() mode at the start of each epoch.
+       Without this, BN running stats stay locked to pretrain values
+       and BN weight/bias gradients are computed against an
+       out-of-distribution normalization.
+
+    2. The DFL conv (`model.{N}.dfl.conv.weight`) is *not* unfrozen.
+       Its weights are a fixed integration kernel `[0, 1, ..., reg_max-1]`
+       used by the loss; training it breaks the head's distance regression.
+       Ultralytics' `always_freeze_names` keeps it frozen by default and
+       so do we.
+
+    3. The trigger is `>=` plus a one-shot flag, not `==`. On resume,
+       `_setup_train` re-applies the original `args.freeze`; with strict
+       equality, resuming past `unfreeze_epoch` would silently leave the
+       backbone frozen for the rest of training.
+
+    4. LR rescaling is gated on `trainer.start_epoch <= unfreeze_epoch`.
+       When resuming from a checkpoint saved *after* the original unfreeze
+       fired, the optimizer's `lr` and `initial_lr` are already scaled,
+       and applying `lr_factor` again would double-scale them.
+    """
     def on_train_epoch_start(trainer) -> None:
-        if trainer.epoch == unfreeze_epoch:
-            for _, param in trainer.model.named_parameters():
+        if getattr(trainer, "_did_unfreeze", False):
+            return
+        if trainer.epoch < unfreeze_epoch:
+            return
+
+        # 1. Flip requires_grad on every param except the DFL integral.
+        n_unfrozen = 0
+        for name, param in trainer.model.named_parameters():
+            if ".dfl" in name:
+                continue
+            if not param.requires_grad:
                 param.requires_grad = True
+                n_unfrozen += 1
+
+        # 2. Stop _model_train() from re-eval()ing backbone BN each epoch.
+        #    `.dfl` is preserved to match Ultralytics' always_freeze_names;
+        #    DFL has no BN inside it, so this is purely defensive.
+        trainer.freeze_layer_names = [".dfl"]
+
+        trainer._did_unfreeze = True
+        print(
+            f"[unfreeze] Unfroze {n_unfrozen} params at epoch "
+            f"{trainer.epoch} (target {unfreeze_epoch})"
+        )
+
+        # 3. Optional LR rescaling. Both `lr` and `initial_lr` are updated:
+        #    LambdaLR recomputes `lr = initial_lr * lf(epoch)` each step,
+        #    and warmup interpolation also reads from `initial_lr`.
+        #    Skip on resume past unfreeze_epoch: the loaded optimizer
+        #    state already carries the scaled values from the original run.
+        if lr_factor != 1.0 and trainer.start_epoch <= unfreeze_epoch:
+            for pg in trainer.optimizer.param_groups:
+                pg["lr"] *= lr_factor
+                pg["initial_lr"] *= lr_factor
+            new_lr = trainer.optimizer.param_groups[0]["lr"]
             print(
-                f"[unfreeze] All layers unfrozen at epoch {unfreeze_epoch}"
+                f"[unfreeze] LR scaled by {lr_factor} → {new_lr:.6f}"
             )
-            if lr_factor != 1.0:
-                for pg in trainer.optimizer.param_groups:
-                    pg["lr"] *= lr_factor
-                    # keeps the scheduler scaling correctly
-                    pg["initial_lr"] *= lr_factor
-                new_lr = trainer.optimizer.param_groups[0]["lr"]
-                print(
-                    f"[unfreeze] LR scaled by {lr_factor} → {new_lr:.6f}"
-                )
+        elif lr_factor != 1.0:
+            print(
+                f"[unfreeze] Skipping LR rescale on resume "
+                f"(start_epoch={trainer.start_epoch} > "
+                f"unfreeze_epoch={unfreeze_epoch}); "
+                f"optimizer state already carries scaled LR"
+            )
     return on_train_epoch_start
 
 
@@ -101,7 +158,18 @@ def _bucket_for(altitude: Optional[float]) -> Optional[str]:
 
 
 def _on_val_start(validator) -> None:
+    """Wrap update_metrics once per validator instance, reset stats each call.
+
+    The trainer keeps a single validator across all epochs (created once in
+    BaseTrainer._setup_train), so naively rewrapping update_metrics every
+    epoch nests wrappers — by epoch N, n_new entries get appended N times
+    each call. We guard against this with a sentinel attribute and always
+    reset _per_image_stats here.
+    """
     validator._per_image_stats = []
+    if getattr(validator, "_metadata_wrap_installed", False):
+        return
+
     original_update = validator.update_metrics
     stats_dict = validator.metrics.stats
 
@@ -116,6 +184,7 @@ def _on_val_start(validator) -> None:
             )
 
     validator.update_metrics = wrapped_update_metrics
+    validator._metadata_wrap_installed = True
 
 
 def _to_key(s: str) -> str:

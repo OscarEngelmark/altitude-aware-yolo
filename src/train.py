@@ -55,7 +55,7 @@ DEVICE: str = "0" if torch.cuda.is_available() else "cpu"
 DEFAULT_EPOCHS   = 100
 DEFAULT_PATIENCE = 20
 DEFAULT_IMGSZ    = 1920
-DEFAULT_BATCH    = 8
+DEFAULT_BATCH    = 4
 DEFAULT_WORKERS  = 16
 DEFAULT_RUN_NAME = "test-run"
 DEFAULT_MODEL    = "yolov9s"
@@ -226,7 +226,7 @@ def write_dataset_yaml() -> str:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
     return str(path)
 
-
+    
 def _read_saved_run_id(run_name: str) -> Optional[str]:
     """Return the saved W&B run ID for run_name, or None if absent."""
     id_file = g.RUNS_DIR / run_name / "wandb_run_id.txt"
@@ -322,7 +322,7 @@ def resolve_train_kwargs(
         "patience":     args.patience,
         "freeze":       args.freeze if args.freeze > 0 else None,
         "close_mosaic": 0,
-        "save_period":  10,
+        "save_period":  5,
         "compile":      torch.cuda.is_available(),
         "device":       DEVICE,
         "seed":         g.SEED,
@@ -344,7 +344,6 @@ def attach_callbacks(model: YOLO, args: argparse.Namespace) -> None:
                 args.unfreeze_epoch, args.lr_unfreeze_factor
             ),
         )
-
 
 # ── main ─────────────────────────────────────────────────────────────────────
 

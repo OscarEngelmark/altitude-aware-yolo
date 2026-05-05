@@ -239,5 +239,9 @@ notes.txt
 # Output files
 *.out
 
-# Report files
+# Report/presentation
 report/
+presentation/
+
+# Graphviz files
+*.dot

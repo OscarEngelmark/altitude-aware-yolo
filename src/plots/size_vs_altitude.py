@@ -207,7 +207,7 @@ def main() -> None:
         f"Box size vs altitude  "
         f"(splits: {', '.join(args.splits)},  n={len(altitudes):,})"
     )
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper right", bbox_to_anchor=(1.0, 0.88))
     ax.xaxis.set_minor_locator(ticker.AutoMinorLocator())
     ax.yaxis.set_minor_locator(ticker.AutoMinorLocator())
     ax.set_xlim(left=h_lo)

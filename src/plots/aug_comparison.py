@@ -5,6 +5,8 @@ Panels (shared x-axis):
   (2) Scale + mosaic         — standard YOLOv9 scale jitter
   (3) Altitude-aware scale   — per-frame h_target sampling (AAS)
 
+When --style is omitted both 'report' and 'ppt' versions are saved.
+
 Usage
 -----
     cd src && python plots/aug_comparison.py
@@ -55,12 +57,13 @@ def parse_args() -> argparse.Namespace:
         "--out", type=Path, default=None,
         help=(
             "Output path "
-            "(default: results/aug_comparison_{split}.{pdf|png})"
+            "(default: results/aug_comparison_{split}_{style}.{ext})"
         ),
     )
     p.add_argument(
         "--style", choices=style.STYLES, default=None,
-        help="Output style: 'report' (PDF) or 'ppt' (PNG)",
+        help="Output style: 'report' (PDF) or 'ppt' (PNG). "
+             "Omit to produce both.",
     )
     p.add_argument(
         "--bins", type=int, default=200,
@@ -118,6 +121,7 @@ def plot_panels(
     """Draw one weighted histogram per axis.
 
     rows: list of (panel_title, alts, weights, color)
+    Weights are frame counts (1 per original frame after normalisation).
     """
     all_alts = [a for _, alts, _, _ in rows for a in alts]
     edges = np.linspace(min(all_alts), x_max, bins + 1).tolist()
@@ -125,11 +129,11 @@ def plot_panels(
     for ax, (title, alts, weights, color) in zip(axes, rows):
         ax.hist(
             alts, bins=edges, weights=weights,
-            color=color, label=f"cars = {sum(weights):,.0f}",
+            color=color, label=f"frames = {sum(weights):,.0f}",
         )
         ax.set_title(title)
         ax.set_xlabel("Estimated altitude (m)")
-        ax.set_ylabel("Car count")
+        ax.set_ylabel("Frame count")
         ax.legend()
 
     y_max = max(ax.get_ylim()[1] for ax in axes)
@@ -139,14 +143,6 @@ def plot_panels(
 
 def main() -> None:
     args = parse_args()
-    fmt = style.output_fmt(args.style) if args.style else "png"
-    dpi = style.save_dpi(args.style) if args.style else 150
-    if args.out is None:
-        args.out = (
-            g.RESULTS_DIR / f"aug_comparison_{args.split}.{fmt}"
-        )
-    if args.style:
-        style.apply_style(args.style)
 
     rng = np.random.default_rng(args.seed)
 
@@ -155,7 +151,8 @@ def main() -> None:
 
     by_split = load_split_data(metadata)
     alts: List[float] = by_split[args.split]["alts"]
-    weights: List[float] = by_split[args.split]["weights"]
+    # Weight = 1 per frame: augmentation operates at frame level, not per car.
+    weights: List[float] = [1.0] * len(alts)
 
     if not alts:
         raise ValueError(f"No altitude data found for split '{args.split}'")
@@ -181,41 +178,49 @@ def main() -> None:
         alt_mode=mode,
     )
 
-    mosaic_str = "mosaic on" if args.mosaic else "mosaic off"
-    scale_title = (
-        f"Scale + mosaic  (scale={args.scale}, {mosaic_str})"
-    )
+    scale_title = f"Mosaic + Scale = {args.scale}"
     if args.dist == "triangular":
         aas_title = (
-            f"Altitude-aware scale  "
-            f"(triangular({args.alt_min:.0f}, "
-            f"{mode:.0f}, {args.alt_max:.0f}) m)"
+            f"Altitude-Aware Scale (AAS) — "
+            f"triangular({args.alt_min:.0f}, "
+            f"{mode:.0f}, {args.alt_max:.0f}) m"
         )
     else:
         aas_title = (
-            f"Altitude-aware scale  "
-            f"(uniform [{args.alt_min:.0f}, {args.alt_max:.0f}] m)"
+            f"Altitude-Aware Scale (AAS) — "
+            f"uniform({args.alt_min:.0f}, {args.alt_max:.0f}) m"
         )
 
     rows: List[Tuple[str, List[float], List[float], str]] = [
-        ("Unmodified",   alts,        weights,        COLORS["raw"]),
-        (scale_title,    scale_alts,  scale_weights,  COLORS["scale"]),
-        (aas_title,      aas_alts,    aas_weights,    COLORS["aas"]),
+        ("Unmodified",  alts,       weights,       COLORS["raw"]),
+        (scale_title,   scale_alts, scale_weights, COLORS["scale"]),
+        (aas_title,     aas_alts,   aas_weights,   COLORS["aas"]),
     ]
 
-    fs = (
-        style.figsize(args.style, n_rows=3)
-        if args.style else (9, 10)
-    )
-    fig, axes = plt.subplots(3, 1, figsize=fs, sharex=True, squeeze=False)
-    plot_panels(rows, list(axes[:, 0]), bins=args.bins, x_max=args.x_max)
-    fig.suptitle(f"Augmentation comparison — {args.split} split")
-    plt.tight_layout()
+    styles_to_run = [args.style] if args.style else style.STYLES
+    for s in styles_to_run:
+        fmt = style.output_fmt(s)
+        dpi = style.save_dpi(s)
+        out = (
+            args.out if args.out is not None
+            else g.RESULTS_DIR / f"aug_comparison_{args.split}_{s}.{fmt}"
+        )
+        style.apply_style(s)
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(args.out, dpi=dpi, bbox_inches="tight")
-    print(f"Saved → {args.out}")
-    plt.show()
+        fs = style.figsize(s, n_rows=3)
+        fig, axes = plt.subplots(
+            3, 1, figsize=fs, sharex=True, squeeze=False
+        )
+        plot_panels(
+            rows, list(axes[:, 0]), bins=args.bins, x_max=args.x_max
+        )
+        fig.suptitle(f"Augmentation comparison — {args.split} split")
+        plt.tight_layout()
+
+        out.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(out, dpi=dpi, bbox_inches="tight")
+        print(f"Saved → {out}")
+        plt.show()
 
 
 if __name__ == "__main__":
