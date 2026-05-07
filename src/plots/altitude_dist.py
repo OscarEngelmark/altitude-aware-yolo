@@ -191,11 +191,16 @@ def augment_train_altitude_aware(
     rng: np.random.Generator,
     dist: str = "uniform",
     alt_mode: Optional[float] = None,
+    mosaic: bool = False,
 ) -> Tuple[List[float], List[float]]:
     """Altitude-aware augmentation: sample h_target from the chosen
-    distribution over [alt_min, alt_max], compute s = h / h_target,
-    clamp to [SCALE_FLOOR, SCALE_CEILING], then apparent_altitude = h / s.
-    When s is unclamped, apparent_altitude == h_target exactly.
+    distribution over [alt_min, alt_max], compute s = eff_alt / h_target,
+    clamp to [SCALE_FLOOR, SCALE_CEILING], then apparent_altitude =
+    eff_alt / s.  When s is unclamped, apparent_altitude == h_target exactly.
+
+    mosaic=True mirrors AltitudeAwareMosaic: eff_alt = sqrt(4) * h = 2h,
+    shifting the ceiling-clamp threshold and clamped apparent altitudes
+    upward by the same factor.
 
     dist='uniform'    -> h_target ~ U(alt_min, alt_max)
     dist='triangular' -> h_target ~ Triangular(alt_min, alt_mode, alt_max)
@@ -204,6 +209,9 @@ def augment_train_altitude_aware(
     alts_arr = np.array(alts)
     w_arr = np.array(weights) / n_samples
 
+    mosaic_factor = 2.0 if mosaic else 1.0
+    eff_alts = alts_arr * mosaic_factor
+
     size = (len(alts), n_samples)
     if dist == "triangular":
         mode = alt_mode if alt_mode is not None else (alt_min + alt_max) / 2
@@ -211,10 +219,10 @@ def augment_train_altitude_aware(
     else:
         h_target = rng.uniform(alt_min, alt_max, size=size)
 
-    s = alts_arr[:, None] / h_target
+    s = eff_alts[:, None] / h_target
     s = np.clip(s, SCALE_FLOOR, SCALE_CEILING)
 
-    aug_alts = (alts_arr[:, None] / s).ravel()
+    aug_alts = (eff_alts[:, None] / s).ravel()
     aug_weights = np.repeat(w_arr, n_samples)
     return aug_alts.tolist(), aug_weights.tolist()
 

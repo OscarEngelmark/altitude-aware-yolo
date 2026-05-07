@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
              "Omit to produce both.",
     )
     p.add_argument(
-        "--bins", type=int, default=200,
+        "--bins", type=int, default=100,
         help="Number of histogram bins (default: 200)",
     )
     p.add_argument(
@@ -76,6 +76,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--mosaic", action="store_true",
         help="Apply mosaic ×2 altitude factor for panel 2",
+    )
+    p.add_argument(
+        "--mosaic-aas", action="store_true", dest="mosaic_aas",
+        help="Apply mosaic ×2 effective-altitude factor for panel 3 (AAS)",
     )
     p.add_argument(
         "--n-samples", type=int, default=DEFAULT_N_SAMPLES,
@@ -176,18 +180,20 @@ def main() -> None:
         rng=rng,
         dist=args.dist,
         alt_mode=mode,
+        mosaic=args.mosaic_aas,
     )
 
     scale_title = f"Mosaic + Scale = {args.scale}"
+    aas_mosaic_prefix = "Mosaic + " if args.mosaic_aas else ""
     if args.dist == "triangular":
         aas_title = (
-            f"Altitude-Aware Scale (AAS) — "
+            f"{aas_mosaic_prefix}AAS — "
             f"triangular({args.alt_min:.0f}, "
             f"{mode:.0f}, {args.alt_max:.0f}) m"
         )
     else:
         aas_title = (
-            f"Altitude-Aware Scale (AAS) — "
+            f"{aas_mosaic_prefix}AAS — "
             f"uniform({args.alt_min:.0f}, {args.alt_max:.0f}) m"
         )
 
@@ -214,7 +220,7 @@ def main() -> None:
         plot_panels(
             rows, list(axes[:, 0]), bins=args.bins, x_max=args.x_max
         )
-        fig.suptitle(f"Augmentation comparison — {args.split} split")
+        fig.suptitle(f"Effective altitude distributions — {args.split} split")
         plt.tight_layout()
 
         out.parent.mkdir(parents=True, exist_ok=True)
