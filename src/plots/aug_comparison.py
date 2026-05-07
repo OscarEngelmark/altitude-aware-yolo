@@ -110,6 +110,11 @@ def parse_args() -> argparse.Namespace:
         help="Upper x-axis limit (default: 600)",
     )
     p.add_argument(
+        "--panels", type=int, choices=[2, 3], default=3,
+        help="Number of panels to show (default: 3). "
+             "Use 2 to show only Unmodified + Scale.",
+    )
+    p.add_argument(
         "--seed", type=int, default=g.SEED,
         help="RNG seed for reproducibility",
     )
@@ -136,9 +141,9 @@ def plot_panels(
             color=color, label=f"frames = {sum(weights):,.0f}",
         )
         ax.set_title(title)
-        ax.set_xlabel("Estimated altitude (m)")
         ax.set_ylabel("Frame count")
         ax.legend()
+    axes[-1].set_xlabel("Effective altitude (m)")
 
     y_max = max(ax.get_ylim()[1] for ax in axes)
     for ax in axes:
@@ -203,23 +208,42 @@ def main() -> None:
         (aas_title,     aas_alts,   aas_weights,   COLORS["aas"]),
     ]
 
+    n_panels = args.panels
+    panel_suffix = f"_{n_panels}panel" if n_panels != 3 else ""
+
     styles_to_run = [args.style] if args.style else style.STYLES
     for s in styles_to_run:
         fmt = style.output_fmt(s)
         dpi = style.save_dpi(s)
         out = (
             args.out if args.out is not None
-            else g.RESULTS_DIR / f"aug_comparison_{args.split}_{s}.{fmt}"
+            else g.RESULTS_DIR / (
+                f"aug_comparison_{args.split}{panel_suffix}_{s}.{fmt}"
+            )
         )
         style.apply_style(s)
 
+        PPT_WIDTH = 13.0
         fs = style.figsize(s, n_rows=3)
+        if s == style.PPT:
+            font_scale = PPT_WIDTH / style.figsize(s)[0]
+            plt.rcParams.update({
+                k: round(plt.rcParams[k] * font_scale)
+                for k in (
+                    "font.size", "axes.titlesize", "axes.labelsize",
+                    "legend.fontsize", "xtick.labelsize", "ytick.labelsize",
+                )
+            })
+            fs = (PPT_WIDTH, fs[1])
         fig, axes = plt.subplots(
             3, 1, figsize=fs, sharex=True, squeeze=False
         )
         plot_panels(
-            rows, list(axes[:, 0]), bins=args.bins, x_max=args.x_max
+            rows[:n_panels], list(axes[:n_panels, 0]),
+            bins=args.bins, x_max=args.x_max,
         )
+        for ax in axes[n_panels:, 0]:
+            ax.set_visible(False)
         fig.suptitle(f"Effective altitude distributions — {args.split} split")
         plt.tight_layout()
 
