@@ -242,6 +242,7 @@ def main() -> None:
             rows[:n_panels], list(axes[:n_panels, 0]),
             bins=args.bins, x_max=args.x_max,
         )
+        axes[n_panels - 1, 0].tick_params(labelbottom=True)
         for ax in axes[n_panels:, 0]:
             ax.set_visible(False)
         fig.suptitle(f"Effective altitude distributions — {args.split} split")
