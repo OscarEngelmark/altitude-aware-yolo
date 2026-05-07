@@ -129,7 +129,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--run-name", type=str, default=None,
-        help="name used for the output plot (defaults to 'eval-<weights stem>')",
+        help="name used for the output plot "
+             "(defaults to 'eval-<weights stem>')",
     )
     p.add_argument(
         "--imgsz", type=int, default=1920,
