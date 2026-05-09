@@ -6,9 +6,11 @@ results/<run-name>.png.
 
 Usage
 -----
-python src/evaluate.py --weights runs/<run>/weights/best.pt
-python src/evaluate.py --weights runs/<run>/weights/best.pt --split val
-python src/evaluate.py --weights runs/<run>/weights/best.pt --run-name my-eval
+python src/evaluate.py --run test-run --weights best.pt
+python src/evaluate.py --run test-run --weights best.pt epoch45.pt
+python src/evaluate.py --run test-run --all-weights
+python src/evaluate.py --run test-run --weights best.pt --split val
+python src/evaluate.py --run test-run --weights best.pt --run-name my-eval
 """
 
 import argparse
@@ -124,13 +126,23 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate a YOLOv9-OBB checkpoint on the test split"
     )
     p.add_argument(
-        "--weights", type=str, required=True,
-        help="path to checkpoint, e.g. runs/<run>/weights/best.pt",
+        "--run", type=str, required=True,
+        help="run directory name under runs/, e.g. yolov9s-aas-12",
+    )
+    wt = p.add_mutually_exclusive_group(required=True)
+    wt.add_argument(
+        "--weights", type=str, nargs="+",
+        help="one or more filenames under <run>/weights/, e.g. best.pt "
+             "epoch45.pt",
+    )
+    wt.add_argument(
+        "--all-weights", action="store_true",
+        help="evaluate every .pt file found in <run>/weights/",
     )
     p.add_argument(
         "--run-name", type=str, default=None,
-        help="name used for the output plot "
-             "(defaults to 'eval-<weights stem>')",
+        help="name used for the output plot; only applies when a single "
+             "weights file is given (defaults to 'eval-<stem>-<run>')",
     )
     p.add_argument(
         "--imgsz", type=int, default=1920,
@@ -149,32 +161,30 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-
-    weights_path = g.PROJECT_DIR / args.weights
-    if not weights_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {weights_path}")
-
-    run_name = args.run_name or (
-        f"eval-{weights_path.stem}-{weights_path.parent.parent.name}"
-    )
-    dataset_yaml = write_dataset_yaml()
+def evaluate_checkpoint(
+    weights_path: Path,
+    run_name: str,
+    dataset_yaml: str,
+    split: str,
+    imgsz: int,
+    batch: int,
+    workers: int,
+) -> None:
+    print(f"\n{'='*60}")
     print(f"Weights:  {weights_path}")
-    print(f"Dataset:  {dataset_yaml}")
-    print(f"Device:   {DEVICE}")
+    print(f"Run name: {run_name}")
 
     model = YOLO(str(weights_path))
     register_metadata_callbacks(model, training=False)
 
     results = model.val(
         data=dataset_yaml,
-        split=args.split,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        workers=args.workers,
+        split=split,
+        imgsz=imgsz,
+        batch=batch,
+        workers=workers,
         device=DEVICE,
-        project=str(g.PROJECT_DIR / "runs"),
+        project=str(g.RUNS_DIR),
         name=run_name,
     )
 
@@ -186,17 +196,53 @@ def main() -> None:
         "mAP50-95":  float(box.map),
     }
 
-    s = args.split.capitalize()
+    s = split.capitalize()
     print(f"\n{s} mAP50:      {overall['mAP50']:.4f}")
     print(f"{s} mAP50-95:   {overall['mAP50-95']:.4f}")
     print(f"{s} precision:  {overall['precision']:.4f}")
     print(f"{s} recall:     {overall['recall']:.4f}")
-    out = plot_metrics(
-        overall, get_last_bucket_metrics(), run_name, args.split
-    )
+    out = plot_metrics(overall, get_last_bucket_metrics(), run_name, split)
     print(f"Plot saved to:  {out}")
-    save_metrics_csv(weights_path, overall, args.split)
+    save_metrics_csv(weights_path, overall, split)
     print(f"Metrics saved to: {CSV_PATH}")
+
+
+def main() -> None:
+    args = parse_args()
+
+    weights_dir = g.RUNS_DIR / args.run / "weights"
+    if args.all_weights:
+        weights_paths = sorted(weights_dir.glob("*.pt"))
+        if not weights_paths:
+            raise FileNotFoundError(
+                f"No .pt files found in {weights_dir}"
+            )
+    else:
+        weights_paths = []
+        for wf in args.weights:
+            p = weights_dir / wf
+            if not p.exists():
+                raise FileNotFoundError(f"Checkpoint not found: {p}")
+            weights_paths.append(p)
+
+    dataset_yaml = write_dataset_yaml()
+    print(f"Dataset:  {dataset_yaml}")
+    print(f"Device:   {DEVICE}")
+    print(
+        f"Evaluating {len(weights_paths)} checkpoint(s) from run '{args.run}'"
+    )
+
+    single = len(weights_paths) == 1
+    for weights_path in weights_paths:
+        run_name = (
+            args.run_name
+            if single and args.run_name
+            else f"eval-{weights_path.stem}-{args.run}"
+        )
+        evaluate_checkpoint(
+            weights_path, run_name, dataset_yaml,
+            args.split, args.imgsz, args.batch, args.workers,
+        )
 
 
 if __name__ == "__main__":
