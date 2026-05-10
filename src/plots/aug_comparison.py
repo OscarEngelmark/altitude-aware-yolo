@@ -40,11 +40,7 @@ from altitude_dist import (
 
 DEFAULT_SCALE = 0.5
 
-COLORS = {
-    "raw":   "#4C72B0",
-    "scale": "#DD8452",
-    "aas":   "#9467BD",
-}
+COLORS = {"raw": "#4C72B0", "scale": "#DD8452", "aas": "#9467BD"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,15 +51,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--out", type=Path, default=None,
-        help=(
-            "Output path "
-            "(default: results/aug_comparison_{split}_{style}.{ext})"
-        ),
+        help="Output path (default: results/aug_comparison_{split}_{style}.{ext})",
     )
     p.add_argument(
         "--style", choices=style.STYLES, default=None,
-        help="Output style: 'report' (PDF) or 'ppt' (PNG). "
-             "Omit to produce both.",
+        help="Output style: 'report' (PDF) or 'ppt' (PNG). Omit to produce both.",
     )
     p.add_argument(
         "--bins", type=int, default=100,
@@ -181,13 +173,10 @@ def main() -> None:
     scale_title = f"Scale = {args.scale}"
     if args.dist == "triangular":
         aas_title = (
-            f"AAS — triangular({args.alt_min:.0f}, "
-            f"{mode:.0f}, {args.alt_max:.0f}) m"
+            f"AAS — triangular({args.alt_min:.0f}, {mode:.0f}, {args.alt_max:.0f}) m"
         )
     else:
-        aas_title = (
-            f"AAS — uniform({args.alt_min:.0f}, {args.alt_max:.0f}) m"
-        )
+        aas_title = (f"AAS — uniform({args.alt_min:.0f}, {args.alt_max:.0f}) m")
 
     rows: List[Tuple[str, List[float], List[float], str]] = [
         ("Unmodified",  alts,       weights,       COLORS["raw"]),
@@ -222,9 +211,7 @@ def main() -> None:
                 )
             })
             fs = (PPT_WIDTH, fs[1])
-        fig, axes = plt.subplots(
-            3, 1, figsize=fs, sharex=True, squeeze=False
-        )
+        fig, axes = plt.subplots(3, 1, figsize=fs, sharex=True, squeeze=False)
         plot_panels(
             rows[:n_panels], list(axes[:n_panels, 0]),
             bins=args.bins, x_max=args.x_max,
