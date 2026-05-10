@@ -158,11 +158,11 @@ def parse_args() -> argparse.Namespace:
 
     g_alt = p.add_argument_group("altitude-aware scale")
     g_alt.add_argument(
-        "--altitude-aware-scale", action="store_true",
+        "--aas", action="store_true",
         dest="altitude_aware_scale",
         help=(
-            "use altitude-aware scale augmentation: sample "
-            "h_target ~ U(alt_min, alt_max), apply s = h / h_target"
+            "use altitude-aware scale augmentation: "
+            "sample h_target ~ dist(alt_min, alt_max), apply s = h / h_target"
         ),
     )
     g_alt.add_argument(
