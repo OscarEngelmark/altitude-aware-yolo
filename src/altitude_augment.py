@@ -112,9 +112,7 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
                 h_target = random.triangular(self.alt_min, self.alt_max, mode)
             else:
                 h_target = random.uniform(self.alt_min, self.alt_max)
-            s = float(np.clip(
-                self._altitude_m / h_target, SCALE_FLOOR, SCALE_CEILING
-            ))
+            s = float(np.clip(self._altitude_m / h_target, SCALE_FLOOR, SCALE_CEILING))
         else:
             s = random.uniform(1.0 - self.scale, 1.0 + self.scale)
         R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
@@ -129,32 +127,22 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
 
         T = np.eye(3, dtype=np.float32)
         T[0, 2] = (
-            random.uniform(0.5 - self.translate, 0.5 + self.translate)
-            * self.size[0]
+            random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[0]
         )
         T[1, 2] = (
-            random.uniform(0.5 - self.translate, 0.5 + self.translate)
-            * self.size[1]
+            random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[1]
         )
 
         M = T @ S @ R @ P @ C
 
-        if (
-            (border[0] != 0)
-            or (border[1] != 0)
-            or (M != np.eye(3)).any()
-        ):
+        if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():
             if self.perspective:
                 img = cv2.warpPerspective(
-                    img, M,
-                    dsize=self.size,
-                    borderValue=(114, 114, 114),
+                    img, M, dsize=self.size, borderValue=(114, 114, 114),
                 )
             else:
                 img = cv2.warpAffine(
-                    img, M[:2],
-                    dsize=self.size,
-                    borderValue=(114, 114, 114),
+                    img, M[:2], dsize=self.size, borderValue=(114, 114, 114),
                 )
             if img.ndim == 2:
                 img = img[..., None]
@@ -162,9 +150,7 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
 
     def __call__(self, labels: Dict) -> Dict:
         altitude_m = labels.get("altitude_m")
-        self._altitude_m = (
-            float(altitude_m) if altitude_m is not None else None
-        )
+        self._altitude_m = float(altitude_m) if altitude_m is not None else None
         return super().__call__(labels)
 
 
@@ -230,10 +216,7 @@ def _swap_mosaic(transforms: Compose) -> None:
             _swap_mosaic(t)
         elif type(t) is Mosaic:
             new_mosaic = AltitudeAwareMosaic(
-                dataset=t.dataset,
-                imgsz=t.imgsz,
-                p=t.p,
-                n=t.n,
+                dataset=t.dataset, imgsz=t.imgsz, p=t.p, n=t.n,
             )
             new_mosaic.pre_transform = t.pre_transform
             transforms.transforms[i] = new_mosaic
@@ -310,14 +293,12 @@ class AltitudeAwareOBBTrainer(OBBTrainer):
         ema_module = unwrap_model(self.ema.ema)
         ema_sd = ema_module.state_dict()
         if not any(
-            v.is_floating_point() and not v.isfinite().all()
-            for v in ema_sd.values()
+            v.is_floating_point() and not v.isfinite().all() for v in ema_sd.values()
         ):
             return
         model_sd = unwrap_model(cast(nn.Module, self.model)).state_dict()
         if all(
-            not v.is_floating_point() or v.isfinite().all()
-            for v in model_sd.values()
+            not v.is_floating_point() or v.isfinite().all() for v in model_sd.values()
         ):
             for name, p in ema_module.named_parameters():
                 if name in model_sd:
@@ -326,8 +307,7 @@ class AltitudeAwareOBBTrainer(OBBTrainer):
                 if name in model_sd:
                     b.data.copy_(model_sd[name])
             LOGGER.warning(
-                "NaN/Inf in EMA after update; "
-                "reset to current model weights"
+                "NaN/Inf in EMA after update; reset to current model weights"
             )
         else:
             LOGGER.warning(
