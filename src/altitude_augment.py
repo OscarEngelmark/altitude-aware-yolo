@@ -257,7 +257,9 @@ class AltitudeAwareYOLODataset(YOLODataset):
         transforms = super().build_transforms(hyp)
         if self.augment:
             _swap_mosaic(transforms)
-            _swap_affine(transforms, self.alt_min, self.alt_max, self.dist, self.alt_mode)
+            _swap_affine(
+                transforms, self.alt_min, self.alt_max, self.dist, self.alt_mode
+            )
         return transforms
 
 
