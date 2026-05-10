@@ -1,9 +1,8 @@
 """
 Baseline YOLOv9-OBB training script.
 
-Builds the model from src/configs and transfers backbone weights from the
-pretrained COCO checkpoint (downloaded automatically by ultralytics on first
-use).
+Builds the model from src/configs and transfers backbone weights from the pretrained 
+COCO checkpoint (downloaded automatically by ultralytics on first use).
 
 Usage
 -----
@@ -17,8 +16,7 @@ python src/train.py --resume --run-name exp-01
 # Resume from a specific checkpoint file
 python src/train.py --resume runs/exp-01/weights/epoch50.pt --run-name exp-01
 
-# Resume with a manually supplied W&B run ID (for runs started without
-# --resume support)
+# Resume with a manually supplied W&B run ID (for runs started without --resume support)
 python src/train.py --resume --run-name exp-01 --wandb-id abc12345
 """
 
