@@ -37,7 +37,7 @@ import torch.nn as nn
 from ultralytics.data.augment import Compose, Mosaic, RandomPerspective
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.models.yolo.obb.train import OBBTrainer
-from ultralytics.utils import DEFAULT_CFG, LOGGER, colorstr
+from ultralytics.utils import DEFAULT_CFG, colorstr
 from ultralytics.utils.torch_utils import unwrap_model
 
 import globals as g
@@ -283,35 +283,6 @@ class AltitudeAwareOBBTrainer(OBBTrainer):
         _mode = overrides.pop("alt_mode", None)
         self.alt_mode = float(_mode) if _mode is not None else None
         super().__init__(cfg, overrides, _callbacks)
-
-    def optimizer_step(self) -> None:
-        super().optimizer_step()
-        if not self.ema:
-            return
-        ema_module = unwrap_model(self.ema.ema)
-        ema_sd = ema_module.state_dict()
-        if not any(
-            v.is_floating_point() and not v.isfinite().all() for v in ema_sd.values()
-        ):
-            return
-        model_sd = unwrap_model(cast(nn.Module, self.model)).state_dict()
-        if all(
-            not v.is_floating_point() or v.isfinite().all() for v in model_sd.values()
-        ):
-            for name, p in ema_module.named_parameters():
-                if name in model_sd:
-                    p.data.copy_(model_sd[name])
-            for name, b in ema_module.named_buffers():
-                if name in model_sd:
-                    b.data.copy_(model_sd[name])
-            LOGGER.warning(
-                "NaN/Inf in EMA after update; reset to current model weights"
-            )
-        else:
-            LOGGER.warning(
-                "NaN/Inf in both EMA and model weights; "
-                "consider stopping and resuming from last checkpoint"
-            )
 
     def build_dataset(
         self,
