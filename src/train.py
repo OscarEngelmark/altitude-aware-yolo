@@ -191,9 +191,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def _validate_args(
-        p: argparse.ArgumentParser, args: argparse.Namespace
-) -> None:
+def _validate_args(p: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Raise p.error for cross-argument constraint violations."""
     if args.wandb_id and not args.resume:
         p.error("--wandb-id requires --resume")
@@ -203,9 +201,7 @@ def _validate_args(
 
     alt_flags = [args.alt_min, args.alt_max, args.alt_mode]
     if any(v is not None for v in alt_flags) and not args.altitude_aware_scale:
-        p.error(
-            "--alt-min/--alt-max/--alt-mode require --altitude-aware-scale"
-        )
+        p.error("--alt-min/--alt-max/--alt-mode require --altitude-aware-scale")
     if args.alt_dist != "uniform" and not args.altitude_aware_scale:
         p.error("--alt-dist requires --altitude-aware-scale")
     if args.alt_mode is not None and args.alt_dist != "triangular":
@@ -350,9 +346,7 @@ def attach_callbacks(model: YOLO, args: argparse.Namespace) -> None:
     if args.freeze > 0 and args.unfreeze_epoch > 0:
         model.add_callback(
             "on_train_epoch_start",
-            make_unfreeze_callback(
-                args.unfreeze_epoch, args.lr_unfreeze_factor
-            ),
+            make_unfreeze_callback(args.unfreeze_epoch, args.lr_unfreeze_factor)
         )
 
 # ── main ─────────────────────────────────────────────────────────────────────
