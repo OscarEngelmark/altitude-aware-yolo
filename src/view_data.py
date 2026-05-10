@@ -263,6 +263,60 @@ def apply_augment(
 # Display utilities
 # ---------------------------------------------------------------------------
 
+def _apply_copy_paste(
+    img: np.ndarray,
+    corners: np.ndarray,
+    p: float,
+    mode: str = "flip",
+) -> Tuple[np.ndarray, np.ndarray]:
+    if p == 0 or len(corners) == 0:
+        return img, corners
+    from ultralytics.data.augment import CopyPaste
+    from ultralytics.utils.instance import Instances
+    bboxes = np.stack([
+        corners[:, :, 0].min(1), corners[:, :, 1].min(1),
+        corners[:, :, 0].max(1), corners[:, :, 1].max(1),
+    ], axis=1).astype(np.float32)
+    inst = Instances(bboxes, segments=corners, bbox_format="xyxy", normalized=False)
+    labels: Dict = {
+        "img": img.copy(),
+        "cls": np.zeros(len(corners), dtype=np.int32),
+        "instances": inst,
+    }
+    result = CopyPaste(dataset=None, p=p, mode=mode)(labels)
+    out_corners = result["instances"].segments
+    return result["img"], out_corners.astype(np.float32)
+
+
+def _apply_mixup(
+    img: np.ndarray,
+    corners: np.ndarray,
+    p: float,
+    all_split_images: List[Path],
+    lbl_dir: Path,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if p == 0 or random.random() > p or not all_split_images:
+        return img, corners
+    other_path = random.choice(all_split_images)
+    other_img = cv2.imread(str(other_path))
+    if other_img is None:
+        return img, corners
+    h, w = img.shape[:2]
+    other_img = cv2.resize(other_img, (w, h))
+    other_corners = load_obb_corners(
+        lbl_dir / other_path.with_suffix(".txt").name, w, h
+    )
+    r = float(np.random.beta(32, 32))
+    mixed = (img * r + other_img * (1 - r)).astype(np.uint8)
+    if len(corners) and len(other_corners):
+        combined = np.concatenate([corners, other_corners], axis=0)
+    elif len(other_corners):
+        combined = other_corners
+    else:
+        combined = corners
+    return mixed, combined
+
+
 def draw_corners(
     img: np.ndarray,
     corners: np.ndarray,
@@ -344,8 +398,18 @@ def _render_augmented_frame(
         img_path, raw, corners, altitude_m,
         all_split_images, lbl_dir, metadata, aug_cfg,
     )
+    src_img, src_corners = _apply_copy_paste(
+        src_img, src_corners,
+        aug_cfg.get("copy_paste", 0.0),
+        aug_cfg.get("copy_paste_mode", "flip"),
+    )
     aug, aug_c, _, _ = apply_augment(
         src_img, src_corners, src_alt, transform, aug_cfg
+    )
+    aug, aug_c = _apply_mixup(
+        aug, aug_c,
+        aug_cfg.get("mixup", 0.0),
+        all_split_images, lbl_dir,
     )
     draw_corners(aug, aug_c)
     overlay_info(aug, img_path.stem, augment_name)
