@@ -521,6 +521,7 @@ def main(opt: argparse.Namespace) -> None:
         transform = InstrumentedPerspective(
             alt_min=opt.alt_min,
             alt_max=opt.alt_max,
+            dist=opt.alt_dist,
             alt_mode=opt.alt_mode,
             degrees=float(aug_cfg.get("degrees", 10.0)),
             translate=float(aug_cfg.get("translate", 0.1)),
@@ -602,8 +603,16 @@ def parse_opt() -> argparse.Namespace:
         help="AAS maximum target altitude in metres (default: 300)",
     )
     parser.add_argument(
+        "--alt-dist", choices=["uniform", "triangular"], default="uniform",
+        dest="alt_dist",
+        help="target altitude distribution: uniform (default) or triangular",
+    )
+    parser.add_argument(
         "--alt-mode", type=float, default=None, dest="alt_mode",
-        help="Triangular distribution mode in metres (omit for uniform)",
+        help=(
+            "peak of the triangular target distribution in metres "
+            "(only used with --alt-dist triangular; defaults to midpoint)"
+        ),
     )
     return parser.parse_args()
 

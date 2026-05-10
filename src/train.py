@@ -174,10 +174,15 @@ def parse_args() -> argparse.Namespace:
         help="upper bound of target altitude range in metres (default: 300)",
     )
     g_alt.add_argument(
+        "--alt-dist", choices=["uniform", "triangular"], default="uniform",
+        dest="alt_dist",
+        help="target altitude distribution: uniform (default) or triangular",
+    )
+    g_alt.add_argument(
         "--alt-mode", type=float, default=None, dest="alt_mode",
         help=(
-            "peak of a triangular target altitude distribution in metres; "
-            "omit for uniform U(alt_min, alt_max)"
+            "peak of the triangular target altitude distribution in metres "
+            "(only used with --alt-dist triangular; defaults to midpoint)"
         ),
     )
 
@@ -201,6 +206,10 @@ def _validate_args(
         p.error(
             "--alt-min/--alt-max/--alt-mode require --altitude-aware-scale"
         )
+    if args.alt_dist != "uniform" and not args.altitude_aware_scale:
+        p.error("--alt-dist requires --altitude-aware-scale")
+    if args.alt_mode is not None and args.alt_dist != "triangular":
+        p.error("--alt-mode requires --alt-dist triangular")
 
     lo = args.alt_min if args.alt_min is not None else 100.0
     hi = args.alt_max if args.alt_max is not None else 300.0
@@ -287,6 +296,7 @@ def resolve_train_kwargs(
         {
             "alt_min":  args.alt_min  if args.alt_min  is not None else 100.0,
             "alt_max":  args.alt_max  if args.alt_max  is not None else 300.0,
+            "alt_dist": args.alt_dist,
             "alt_mode": args.alt_mode,
         }
         if args.altitude_aware_scale else {}

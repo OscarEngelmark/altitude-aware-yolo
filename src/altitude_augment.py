@@ -74,12 +74,14 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
         self,
         alt_min: float = 100.0,
         alt_max: float = 300.0,
+        dist: str = "uniform",
         alt_mode: Optional[float] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.alt_min = alt_min
         self.alt_max = alt_max
+        self.dist = dist
         self.alt_mode = alt_mode
         self._altitude_m: Optional[float] = None
 
@@ -101,10 +103,13 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
         R = np.eye(3, dtype=np.float32)
         a = random.uniform(-self.degrees, self.degrees)
         if self._altitude_m is not None:
-            if self.alt_mode is not None:
-                h_target = random.triangular(
-                    self.alt_min, self.alt_max, self.alt_mode
+            if self.dist == "triangular":
+                mode = (
+                    self.alt_mode
+                    if self.alt_mode is not None
+                    else (self.alt_min + self.alt_max) / 2
                 )
+                h_target = random.triangular(self.alt_min, self.alt_max, mode)
             else:
                 h_target = random.uniform(self.alt_min, self.alt_max)
             s = float(np.clip(
@@ -167,17 +172,19 @@ def _swap_affine(
     transforms: Compose,
     alt_min: float,
     alt_max: float,
+    dist: str = "uniform",
     alt_mode: Optional[float] = None,
 ) -> None:
     """In-place: replace RandomPerspective with AltitudeAwareRandomPerspective
     everywhere inside a Compose tree."""
     for i, t in enumerate(transforms.transforms):
         if isinstance(t, Compose):
-            _swap_affine(t, alt_min, alt_max, alt_mode)
+            _swap_affine(t, alt_min, alt_max, dist, alt_mode)
         elif type(t) is RandomPerspective:
             transforms.transforms[i] = AltitudeAwareRandomPerspective(
                 alt_min=alt_min,
                 alt_max=alt_max,
+                dist=dist,
                 alt_mode=alt_mode,
                 degrees=t.degrees,
                 translate=t.translate,
@@ -241,12 +248,14 @@ class AltitudeAwareYOLODataset(YOLODataset):
         *args,
         alt_min: float = 100.0,
         alt_max: float = 300.0,
+        dist: str = "uniform",
         alt_mode: Optional[float] = None,
         metadata_path: Path = g.OUT_DIR / "metadata.json",
         **kwargs,
     ) -> None:
         self.alt_min = alt_min
         self.alt_max = alt_max
+        self.dist = dist
         self.alt_mode = alt_mode
         with open(metadata_path) as f:
             raw: dict = json.load(f)
@@ -269,7 +278,7 @@ class AltitudeAwareYOLODataset(YOLODataset):
         transforms = super().build_transforms(hyp)
         if self.augment:
             _swap_mosaic(transforms)
-            _swap_affine(transforms, self.alt_min, self.alt_max, self.alt_mode)
+            _swap_affine(transforms, self.alt_min, self.alt_max, self.dist, self.alt_mode)
         return transforms
 
 
@@ -289,6 +298,7 @@ class AltitudeAwareOBBTrainer(OBBTrainer):
         overrides = dict(overrides or {})
         self.alt_min = float(overrides.pop("alt_min", 100.0))
         self.alt_max = float(overrides.pop("alt_max", 300.0))
+        self.dist = str(overrides.pop("alt_dist", "uniform"))
         _mode = overrides.pop("alt_mode", None)
         self.alt_mode = float(_mode) if _mode is not None else None
         super().__init__(cfg, overrides, _callbacks)
@@ -353,5 +363,6 @@ class AltitudeAwareOBBTrainer(OBBTrainer):
             fraction=self.args.fraction,
             alt_min=self.alt_min,
             alt_max=self.alt_max,
+            dist=self.dist,
             alt_mode=self.alt_mode,
         )
