@@ -130,7 +130,35 @@ def build_mosaic(
         if all_corners
         else np.zeros((0, 4, 2), dtype=np.float32)
     )
-    return mosaic, merged
+    return mosaic, _filter_corners(merged, w0, h0)
+
+
+def _filter_corners(
+    corners: np.ndarray, w: int, h: int, min_overlap: float = 0.1
+) -> np.ndarray:
+    """Drop OBB boxes with less than min_overlap fraction inside [0,w]×[0,h].
+
+    Mirrors ultralytics' mosaic label clipping: boxes that fall mostly outside
+    the crop window are discarded rather than distorted.
+    """
+    if corners.shape[0] == 0:
+        return corners
+    keep: List[np.ndarray] = []
+    for box in corners:
+        bx1, by1 = float(box[:, 0].min()), float(box[:, 1].min())
+        bx2, by2 = float(box[:, 0].max()), float(box[:, 1].max())
+        box_area = (bx2 - bx1) * (by2 - by1)
+        if box_area <= 0:
+            continue
+        ix = max(0.0, min(bx2, float(w)) - max(bx1, 0.0))
+        iy = max(0.0, min(by2, float(h)) - max(by1, 0.0))
+        if (ix * iy) / box_area >= min_overlap:
+            keep.append(box)
+    return (
+        np.array(keep, dtype=np.float32)
+        if keep
+        else np.zeros((0, 4, 2), dtype=np.float32)
+    )
 
 
 def apply_augment(
@@ -189,16 +217,11 @@ def draw_corners(
 def overlay_info(
     img: np.ndarray,
     stem: str,
-    altitude_m: Optional[float],
-    scale: Optional[float],
-    h_target: Optional[float],
+    augment_name: str,
 ) -> None:
     lines = [
         stem,
-        f"Raw alt: {altitude_m:.0f} m" if altitude_m is not None
-            else "Raw alt:  unknown",
-        f"Scale:   {scale:.3f}x" if scale is not None else "Scale:    —",
-        f"App alt: {h_target:.0f} m" if h_target is not None else "App alt:  —",
+        f"Augmentation: {augment_name}.yaml",
     ]
     font = cv2.FONT_HERSHEY_SIMPLEX
     fscale = 0.55
@@ -357,11 +380,11 @@ def main(opt: argparse.Namespace) -> None:
                 else:
                     src_img, src_corners, src_alt = raw, corners, altitude_m
 
-                aug, aug_c, s, ht = apply_augment(
+                aug, aug_c, _, _ = apply_augment(
                     src_img, src_corners, src_alt, transform, aug_cfg
                 )
                 draw_corners(aug, aug_c)
-                overlay_info(aug, img_path.stem, altitude_m, s, ht)
+                overlay_info(aug, img_path.stem, opt.augment)
                 return _resize_for_display(aug, opt.max_dim)
 
             frame = render()
