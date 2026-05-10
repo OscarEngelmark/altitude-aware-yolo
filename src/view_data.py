@@ -450,6 +450,12 @@ def _run_viewer(
             elif key == ord("s"):
                 save_dir.mkdir(parents=True, exist_ok=True)
                 out_path = save_dir / save_name_fn(img_path)
+                if out_path.exists():
+                    stem, suffix = out_path.stem, out_path.suffix
+                    counter = 1
+                    while out_path.exists():
+                        out_path = save_dir / f"{stem}_{counter}{suffix}"
+                        counter += 1
                 cv2.imwrite(str(out_path), frame)
                 print(f"Saved {out_path}")
             else:
