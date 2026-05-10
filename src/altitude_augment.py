@@ -1,27 +1,26 @@
 """
 Altitude-aware scale augmentation for YOLO OBB training.
 
-For each training frame at altitude h, a target altitude h_target is
-sampled and scale s = h / h_target is applied, so the apparent altitude
-equals h_target (up to clamping at SCALE_FLOOR / SCALE_CEILING).
+For each training frame at altitude h, a target altitude h_target is sampled and 
+scale s = h / h_target is applied, so the apparent altitude equals h_target (up to 
+clamping at SCALE_FLOOR / SCALE_CEILING).
 
 Two target distributions are supported:
-  uniform:    h_target ~ U(alt_min, alt_max)          -> flat distribution
+  uniform:    h_target ~ U(alt_min, alt_max)
   triangular: h_target ~ Triangular(alt_min, alt_max, alt_mode)
 
 Public API
 ----------
 AltitudeAwareOBBTrainer   pass to YOLO.train(trainer=...)
-compute_scale_bounds       utility exposed for testing / plotting
+compute_scale_bounds      utility exposed for testing / plotting
 
 Notes
 -----
-Altitude is injected into the labels dict by AltitudeAwareYOLODataset
-and read by AltitudeAwareRandomPerspective.  When mosaic=0 the labels
-dict passes through Mosaic unchanged.  When mosaic>0, AltitudeAwareMosaic
-preserves altitude_m as mean(h_i), so the affine transform fires with a
-valid effective altitude.  Because apparent_alt = h_target regardless of
-the effective altitude, the custom distribution propagates through the
+Altitude is injected into the labels dict by AltitudeAwareYOLODataset and read by 
+AltitudeAwareRandomPerspective. When mosaic=0 the labels dict passes through Mosaic 
+unchanged. When mosaic>0, AltitudeAwareMosaic preserves altitude_m as mean(h_i), so the 
+affine transform fires with a valid effective altitude. Because apparent_alt = h_target 
+regardless of the effective altitude, the custom distribution propagates through the
 mosaic path unchanged.
 """
 
@@ -64,9 +63,8 @@ def compute_scale_bounds(
 class AltitudeAwareRandomPerspective(RandomPerspective):
     """RandomPerspective that samples scale from altitude-dependent bounds.
 
-    Reads altitude_m from the labels dict (injected by
-    AltitudeAwareYOLODataset) and samples scale from
-    [h/alt_max, h/alt_min] instead of [1-scale, 1+scale].
+    Reads altitude_m from the labels dict (injected by AltitudeAwareYOLODataset) and 
+    samples scale from [h/alt_max, h/alt_min] instead of [1-scale, 1+scale].
     Falls back to symmetric bounds when altitude_m is absent.
     """
 
@@ -181,16 +179,14 @@ def _swap_affine(
 class AltitudeAwareMosaic(Mosaic):
     """Mosaic that preserves altitude_m as the effective altitude.
 
-    Ultralytics' Mosaic._cat_labels builds a fresh labels dict that drops
-    all non-standard keys.  This override re-inserts altitude_m so that
-    AltitudeAwareRandomPerspective can still fire with a valid altitude
-    after mosaicing.
+    Ultralytics' Mosaic._cat_labels builds a fresh labels dict that drops all 
+    non-standard keys. This override re-inserts altitude_m so that
+    AltitudeAwareRandomPerspective can still fire with a valid altitude after mosaicing.
 
-    Ultralytics mosaic places n tiles (each imgsz×imgsz) on a
-    sqrt(n)*imgsz canvas and center-crops back to imgsz via the
-    RandomPerspective warp.  Because this is a crop (not a downscale),
-    each tile's objects appear at full pixel resolution in the output.
-    The effective altitude is therefore simply mean(h_i).
+    Ultralytics mosaic places n tiles (each imgsz×imgsz) on a sqrt(n)*imgsz canvas and 
+    center-crops back to imgsz via the RandomPerspective warp. Because this is a crop 
+    (not a downscale), each tile's objects appear at full pixel resolution in the 
+    output. The effective altitude is therefore simply mean(h_i).
     """
 
     def _cat_labels(self, mosaic_labels: List) -> Dict:
@@ -266,8 +262,8 @@ class AltitudeAwareYOLODataset(YOLODataset):
 class AltitudeAwareOBBTrainer(OBBTrainer):
     """OBBTrainer that uses AltitudeAwareYOLODataset for the training split.
 
-    alt_min and alt_max are extracted from the overrides dict (pass them
-    as keyword arguments to YOLO.train).
+    alt_min and alt_max are extracted from the overrides dict (pass them as keyword 
+    arguments to YOLO.train).
     """
 
     def __init__(
