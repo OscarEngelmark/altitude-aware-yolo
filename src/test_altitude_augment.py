@@ -180,16 +180,19 @@ class TestFallback:
 class TestMosaicPipelineDistribution:
     """Simulate the full mosaic → scale pipeline.
 
+    Ultralytics mosaic center-crops the 2s×2s canvas back to s×s, so
+    each tile's objects appear at full pixel resolution.
+
     For each sample:
       1. Draw 4 frame altitudes from the training range.
-      2. Compute effective_h = 2 * mean(h_i)  — what _cat_labels stores.
-      3. Draw one scale via affine_transform(effective_h).
-      4. apparent_alt = effective_h / s.
+      2. physical_h = mean(h_i) — what fixed _cat_labels stores.
+      3. Draw one scale via affine_transform(physical_h).
+      4. apparent_alt = physical_h / s = h_target (when unclamped).
 
     Result should be ~ U(alt_min, alt_max).
-    Without the mosaic_factor correction (storing plain mean instead of
-    2*mean), apparent altitudes cluster around U(200, 600) and the KS test
-    fails.
+    The buggy formula stored 2*mean_alt, which causes AAS to draw the same
+    h_target range but apply 2× too much zoom → apparent_alt ≈ h_target/2
+    ∈ [50, 150], far outside [alt_min, alt_max].
     """
 
     FRAME_ALT_MIN = 120.0
@@ -210,20 +213,20 @@ class TestMosaicPipelineDistribution:
                 self.FRAME_ALT_MIN, self.FRAME_ALT_MAX, size=4
             )
             mean_alt = float(frame_alts.mean())
-            # physical_h: mosaic places each frame at 1/2 linear scale,
-            # so the true apparent baseline is always 2 * mean_alt.
+            # physical_h: true apparent altitude baseline (mosaic crops, no factor).
             # stored_h: what _cat_labels writes into the label dict.
-            physical_h = 2.0 * mean_alt
-            stored_h = physical_h if use_factor else mean_alt
+            # use_factor=True simulates the buggy 2× formula for regression.
+            physical_h = mean_alt
+            stored_h = 2.0 * mean_alt if use_factor else mean_alt
             t._altitude_m = stored_h
             _, _, s = t.affine_transform(DUMMY_IMG, DUMMY_BORDER)
             # Apparent altitude the model actually sees after scaling.
             apparent.append(physical_h / s)
         return np.array(apparent)
 
-    def test_with_mosaic_factor_is_uniform(self):
-        """Corrected effective altitude → apparent altitudes ~ U(100, 300)."""
-        apparent = self._simulate(use_factor=True)
+    def test_correct_mean_altitude_is_uniform(self):
+        """Mean-only effective altitude → apparent altitudes ~ U(100, 300)."""
+        apparent = self._simulate(use_factor=False)
         mask = (apparent >= ALT_MIN) & (apparent <= ALT_MAX)
         normed = (apparent[mask] - ALT_MIN) / (ALT_MAX - ALT_MIN)
         _, p = kstest(normed, "uniform")
@@ -232,21 +235,21 @@ class TestMosaicPipelineDistribution:
             "not flat"
         )
 
-    def test_without_mosaic_factor_fails_ks(self):
-        """Plain mean (no correction) → apparent altitudes NOT ~ U(100, 300).
+    def test_sqrt_factor_fails_ks(self):
+        """Buggy sqrt(4) factor → apparent altitudes biased to [50, 150].
 
-        This test documents the pre-fix bug: without the 2x factor the
-        distribution is centred around 2*h_target and the KS test rejects
-        uniformity over [alt_min, alt_max].
+        Regression test: the old formula stored 2*mean_alt, causing AAS to
+        zoom in 2× too much. Apparent altitudes end up around h_target/2,
+        which falls outside [alt_min, alt_max] and fails the KS test.
         """
-        apparent = self._simulate(use_factor=False)
+        apparent = self._simulate(use_factor=True)
         mask = (apparent >= ALT_MIN) & (apparent <= ALT_MAX)
         if mask.sum() < 10:
             return  # virtually no samples in range — already a clear failure
         normed = (apparent[mask] - ALT_MIN) / (ALT_MAX - ALT_MIN)
         _, p = kstest(normed, "uniform")
         assert p < KS_ALPHA, (
-            "Expected the uncorrected distribution to fail the KS test "
+            "Expected the sqrt(4)-factor distribution to fail the KS test "
             f"but got p={p:.4f}"
         )
 
@@ -265,7 +268,7 @@ def _make_mosaic_labels(altitudes: List[Optional[float]]) -> List[Dict]:
             "instances": Instances(
                 bboxes=np.zeros((0, 4), dtype=np.float32),
                 segments=np.zeros((0, 0, 2), dtype=np.float32),
-                keypoints=np.zeros((0, 0, 2), dtype=np.float32),
+                keypoints=np.zeros((0, 0, 3), dtype=np.float32),
                 bbox_format="xyxy",
                 normalized=False,
             ),
@@ -285,18 +288,18 @@ class TestAltitudeAwareMosaic:
         )
 
     def test_mean_of_four_altitudes(self):
-        """n=4 mosaic: effective altitude = 2 * mean (mosaic_factor=2)."""
+        """n=4 mosaic: effective altitude = mean of tile altitudes."""
         mosaic = self._make_mosaic()
         labels = _make_mosaic_labels([100.0, 150.0, 200.0, 250.0])
         result = mosaic._cat_labels(labels)
-        assert result["altitude_m"] == pytest.approx(350.0)  # 2 * 175
+        assert result["altitude_m"] == pytest.approx(175.0)  # mean
 
     def test_partial_altitude_coverage(self):
-        """Mean is over frames that have altitude_m, then scaled by 2."""
+        """Mean is computed only over frames that carry altitude_m."""
         mosaic = self._make_mosaic()
         labels = _make_mosaic_labels([120.0, None, 180.0, None])
         result = mosaic._cat_labels(labels)
-        assert result["altitude_m"] == pytest.approx(300.0)  # 2 * 150
+        assert result["altitude_m"] == pytest.approx(150.0)  # mean of 120, 180
 
     def test_no_altitudes_absent_from_result(self):
         """altitude_m should not appear in result when no frame has it."""
@@ -309,4 +312,4 @@ class TestAltitudeAwareMosaic:
         mosaic = self._make_mosaic()
         labels = _make_mosaic_labels([200.0, None, None, None])
         result = mosaic._cat_labels(labels)
-        assert result["altitude_m"] == pytest.approx(400.0)  # 2 * 200
+        assert result["altitude_m"] == pytest.approx(200.0)  # single tile mean

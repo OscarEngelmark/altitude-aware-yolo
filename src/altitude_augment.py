@@ -19,10 +19,10 @@ Notes
 Altitude is injected into the labels dict by AltitudeAwareYOLODataset
 and read by AltitudeAwareRandomPerspective.  When mosaic=0 the labels
 dict passes through Mosaic unchanged.  When mosaic>0, AltitudeAwareMosaic
-preserves altitude_m as mosaic_factor * mean(h_i), so the affine transform
-fires with a valid effective altitude.  Because apparent_alt = h_target
-regardless of the effective altitude, the triangular distribution propagates
-through the mosaic path unchanged.
+preserves altitude_m as mean(h_i), so the affine transform fires with a
+valid effective altitude.  Because apparent_alt = h_target regardless of
+the effective altitude, the custom distribution propagates through the
+mosaic path unchanged.
 """
 
 import json
@@ -193,16 +193,15 @@ class AltitudeAwareMosaic(Mosaic):
     """Mosaic that preserves altitude_m as the effective altitude.
 
     Ultralytics' Mosaic._cat_labels builds a fresh labels dict that drops
-    all non-standard keys.  This override re-inserts altitude_m as the
-    effective apparent altitude of the mosaic, so that
+    all non-standard keys.  This override re-inserts altitude_m so that
     AltitudeAwareRandomPerspective can still fire with a valid altitude
     after mosaicing.
 
-    Mosaic places n frames (each imgsz x imgsz) on a sqrt(n)*imgsz canvas
-    then crops back to imgsz.  Each frame therefore contributes at
-    1/sqrt(n) linear scale, making objects appear sqrt(n)x further away.
-    We store sqrt(n) * mean(h_i) so the perspective transform targets the
-    correct h_target.
+    Ultralytics mosaic places n tiles (each imgsz×imgsz) on a
+    sqrt(n)*imgsz canvas and center-crops back to imgsz via the
+    RandomPerspective warp.  Because this is a crop (not a downscale),
+    each tile's objects appear at full pixel resolution in the output.
+    The effective altitude is therefore simply mean(h_i).
     """
 
     def _cat_labels(self, mosaic_labels: List) -> Dict:
@@ -213,9 +212,7 @@ class AltitudeAwareMosaic(Mosaic):
             if lbl.get("altitude_m") is not None
         ]
         if alts:
-            mosaic_factor = int(self.n ** 0.5)  # 2 for n=4, 3 for n=9
-            mean_alt = sum(alts) / len(alts)
-            final_labels["altitude_m"] = mosaic_factor * mean_alt
+            final_labels["altitude_m"] = sum(alts) / len(alts)
         return final_labels
 
 
