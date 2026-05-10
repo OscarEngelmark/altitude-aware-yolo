@@ -53,7 +53,7 @@ DEVICE: str = "0" if torch.cuda.is_available() else "cpu"
 # ── defaults ─────────────────────────────────────────────────────────────────
 
 DEFAULT_EPOCHS   = 100
-DEFAULT_PATIENCE = 20
+DEFAULT_PATIENCE = 0
 DEFAULT_IMGSZ    = 1920
 DEFAULT_BATCH    = 4
 DEFAULT_WORKERS  = 16
