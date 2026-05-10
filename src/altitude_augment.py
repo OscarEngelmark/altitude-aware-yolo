@@ -118,12 +118,8 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
         R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
 
         S = np.eye(3, dtype=np.float32)
-        S[0, 1] = math.tan(
-            random.uniform(-self.shear, self.shear) * math.pi / 180
-        )
-        S[1, 0] = math.tan(
-            random.uniform(-self.shear, self.shear) * math.pi / 180
-        )
+        S[0, 1] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)
+        S[1, 0] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)
 
         T = np.eye(3, dtype=np.float32)
         T[0, 2] = (
