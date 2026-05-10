@@ -20,12 +20,32 @@ import json
 import random
 import sys
 from pathlib import Path
-from typing import Any, cast, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
 import globals as g
+
+_WINDOW_NAME = "view_data"
+
+
+# ---------------------------------------------------------------------------
+# OBB label parsing
+# ---------------------------------------------------------------------------
+
+def _parse_obb_label(label_path: Path) -> List[List[float]]:
+    """Return normalized [x1,y1,...,x4,y4] float coords per valid OBB line."""
+    if not label_path.is_file():
+        return []
+    rows: List[List[float]] = []
+    with open(label_path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) != 9:
+                continue
+            rows.append(list(map(float, parts[1:])))
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -36,19 +56,12 @@ def draw_obb(
         img: np.ndarray, label_path: Path, color=(0, 255, 0), thickness: int = 2
     ) -> None:
     h, w = img.shape[:2]
-    if not label_path.is_file():
-        return
-    with open(label_path) as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) != 9:
-                continue
-            coords = list(map(float, parts[1:]))
-            pts = np.array(
-                [(coords[i] * w, coords[i + 1] * h) for i in range(0, 8, 2)],
-                dtype=np.int32,
-            )
-            cv2.polylines(img, [pts], isClosed=True, color=color, thickness=thickness)
+    for coords in _parse_obb_label(label_path):
+        pts = np.array(
+            [(coords[i] * w, coords[i + 1] * h) for i in range(0, 8, 2)],
+            dtype=np.int32,
+        )
+        cv2.polylines(img, [pts], isClosed=True, color=color, thickness=thickness)
 
 
 # ---------------------------------------------------------------------------
@@ -69,20 +82,62 @@ def load_metadata(path: Path) -> Dict[str, float]:
 
 def load_obb_corners(label_path: Path, w: int, h: int) -> np.ndarray:
     """Return (N, 4, 2) pixel-space corners from an OBB label file."""
-    if not label_path.is_file():
-        return np.zeros((0, 4, 2), dtype=np.float32)
-    rows: List[List[Tuple[float, float]]] = []
-    with open(label_path) as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) != 9:
-                continue
-            coords = list(map(float, parts[1:]))
-            pts = [(coords[i] * w, coords[i + 1] * h) for i in range(0, 8, 2)]
-            rows.append(pts)  # type: ignore[arg-type]
+    rows = _parse_obb_label(label_path)
     if not rows:
         return np.zeros((0, 4, 2), dtype=np.float32)
-    return np.array(rows, dtype=np.float32)
+    result: List[List[Tuple[float, float]]] = []
+    for coords in rows:
+        result.append(  # type: ignore[arg-type]
+            [(coords[i] * w, coords[i + 1] * h) for i in range(0, 8, 2)]
+        )
+    return np.array(result, dtype=np.float32)
+
+
+def _build_source(
+    img_path: Path,
+    raw: np.ndarray,
+    corners: np.ndarray,
+    altitude_m: Optional[float],
+    all_split_images: List[Path],
+    lbl_dir: Path,
+    metadata: Dict[str, float],
+    aug_cfg: Dict,
+) -> Tuple[np.ndarray, np.ndarray, Optional[float]]:
+    """Return (src_img, src_corners, src_alt) for the augmentation step.
+
+    Applies mosaic tiling with probability aug_cfg['mosaic'], otherwise
+    passes the raw frame through unchanged.
+    """
+    use_mosaic = random.random() < aug_cfg.get("mosaic", 0.0)
+    if use_mosaic and len(all_split_images) >= 4:
+        pool = [p for p in all_split_images if p != img_path]
+        extra_paths = random.sample(pool, min(3, len(pool)))
+        items: List[Tuple[np.ndarray, np.ndarray]] = [(raw, corners)]
+        tile_alts: List[float] = (
+            [altitude_m] if altitude_m is not None else []
+        )
+        for extra_path in extra_paths:
+            extra_img = cv2.imread(str(extra_path))
+            if extra_img is None:
+                items.append((raw, corners))
+            else:
+                eh, ew = extra_img.shape[:2]
+                extra_corners = load_obb_corners(
+                    lbl_dir / extra_path.with_suffix(".txt").name, ew, eh
+                )
+                items.append((extra_img, extra_corners))
+            alt_e = metadata.get(extra_path.stem)
+            if alt_e is not None:
+                tile_alts.append(alt_e)
+        while len(items) < 4:
+            items.append(items[0])
+        src_img, src_corners = build_mosaic(items[:4])
+        src_alt: Optional[float] = (
+            sum(tile_alts) / len(tile_alts) if tile_alts else None
+        )
+    else:
+        src_img, src_corners, src_alt = raw, corners, altitude_m
+    return src_img, src_corners, src_alt
 
 
 def build_mosaic(
@@ -204,6 +259,10 @@ def apply_augment(
     return aug_img, aug_corners, transform.last_scale, transform.last_h_target
 
 
+# ---------------------------------------------------------------------------
+# Display utilities
+# ---------------------------------------------------------------------------
+
 def draw_corners(
     img: np.ndarray,
     corners: np.ndarray,
@@ -240,10 +299,6 @@ def overlay_info(
         )
 
 
-# ---------------------------------------------------------------------------
-# Shared display utility
-# ---------------------------------------------------------------------------
-
 def _resize_for_display(
     img: np.ndarray, max_dim: Optional[int]
 ) -> np.ndarray:
@@ -251,6 +306,90 @@ def _resize_for_display(
         sc = max_dim / max(img.shape[:2])
         return cv2.resize(img, (int(img.shape[1] * sc), int(img.shape[0] * sc)))
     return img
+
+
+# ---------------------------------------------------------------------------
+# Frame renderers
+# ---------------------------------------------------------------------------
+
+def _render_raw_frame(
+    img_path: Path,
+    lbl_dir: Path,
+    max_dim: Optional[int],
+) -> Optional[np.ndarray]:
+    img = cv2.imread(str(img_path))
+    if img is None:
+        return None
+    draw_obb(img, lbl_dir / img_path.with_suffix(".txt").name)
+    return _resize_for_display(img, max_dim)
+
+
+def _render_augmented_frame(
+    img_path: Path,
+    all_split_images: List[Path],
+    lbl_dir: Path,
+    metadata: Dict[str, float],
+    aug_cfg: Dict,
+    transform: Any,
+    max_dim: Optional[int],
+    augment_name: str,
+) -> Optional[np.ndarray]:
+    raw = cv2.imread(str(img_path))
+    if raw is None:
+        return None
+    h, w = raw.shape[:2]
+    corners = load_obb_corners(lbl_dir / img_path.with_suffix(".txt").name, w, h)
+    altitude_m = metadata.get(img_path.stem)
+    src_img, src_corners, src_alt = _build_source(
+        img_path, raw, corners, altitude_m,
+        all_split_images, lbl_dir, metadata, aug_cfg,
+    )
+    aug, aug_c, _, _ = apply_augment(
+        src_img, src_corners, src_alt, transform, aug_cfg
+    )
+    draw_corners(aug, aug_c)
+    overlay_info(aug, img_path.stem, augment_name)
+    return _resize_for_display(aug, max_dim)
+
+
+# ---------------------------------------------------------------------------
+# Viewer loop
+# ---------------------------------------------------------------------------
+
+def _run_viewer(
+    images: List[Path],
+    render_fn: Callable[[Path], Optional[np.ndarray]],
+    save_dir: Path,
+    save_name_fn: Callable[[Path], str],
+    allow_rerender: bool = False,
+) -> None:
+    quit_requested = False
+    for img_path in images:
+        if quit_requested:
+            break
+        frame = render_fn(img_path)
+        if frame is None:
+            continue
+        cv2.imshow(_WINDOW_NAME, frame)
+        cv2.resizeWindow(_WINDOW_NAME, frame.shape[1], frame.shape[0])
+        while True:
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord("q"):
+                quit_requested = True
+                break
+            elif key == ord("r") and allow_rerender:
+                new_frame = render_fn(img_path)
+                if new_frame is not None:
+                    frame = new_frame
+                    cv2.imshow(_WINDOW_NAME, frame)
+                    cv2.resizeWindow(_WINDOW_NAME, frame.shape[1], frame.shape[0])
+            elif key == ord("s"):
+                save_dir.mkdir(parents=True, exist_ok=True)
+                out_path = save_dir / save_name_fn(img_path)
+                cv2.imwrite(str(out_path), frame)
+                print(f"Saved {out_path}")
+            else:
+                break
 
 
 # ---------------------------------------------------------------------------
@@ -275,11 +414,8 @@ def main(opt: argparse.Namespace) -> None:
     if opt.max:
         images = images[: opt.max]
 
-    cv2.namedWindow("view_data", cv2.WINDOW_NORMAL)
+    cv2.namedWindow(_WINDOW_NAME, cv2.WINDOW_NORMAL)
 
-    # ------------------------------------------------------------------
-    # Augmented mode
-    # ------------------------------------------------------------------
     if opt.augment:
         import yaml
         from altitude_augment import AltitudeAwareRandomPerspective
@@ -332,121 +468,28 @@ def main(opt: argparse.Namespace) -> None:
             "Any key -> next  |  r -> re-augment  |  s -> save  |  q -> quit"
         )
 
-        idx = 0
-        quit_requested = False
-        while idx < len(images) and not quit_requested:
-            img_path = images[idx]
-            _loaded = cv2.imread(str(img_path))
-            if _loaded is None:
-                idx += 1
-                continue
-            raw: np.ndarray = cast(np.ndarray, _loaded)
+        render_fn = lambda p: _render_augmented_frame(
+            p, all_split_images, lbl_dir, metadata, aug_cfg,
+            transform, opt.max_dim, opt.augment,
+        )
+        _run_viewer(
+            images, render_fn,
+            g.RESULTS_DIR / "viz_augmented",
+            lambda p: f"{p.stem}_aug.jpg",
+            allow_rerender=True,
+        )
 
-            h, w = raw.shape[:2]
-            lbl_path = lbl_dir / img_path.with_suffix(".txt").name
-            corners = load_obb_corners(lbl_path, w, h)
-            altitude_m = metadata.get(img_path.stem)
-
-            def render() -> np.ndarray:
-                use_mosaic = random.random() < aug_cfg.get("mosaic", 0.0)
-                if use_mosaic and len(all_split_images) >= 4:
-                    pool = [p for p in all_split_images if p != img_path]
-                    extra_paths = random.sample(pool, min(3, len(pool)))
-                    items: List[Tuple[np.ndarray, np.ndarray]] = [
-                        (raw, corners)
-                    ]
-                    tile_alts: List[float] = (
-                        [altitude_m] if altitude_m is not None else []
-                    )
-                    for ep in extra_paths:
-                        ei = cv2.imread(str(ep))
-                        if ei is None:
-                            items.append((raw, corners))
-                        else:
-                            eh, ew = ei.shape[:2]
-                            ec = load_obb_corners(
-                                lbl_dir / ep.with_suffix(".txt").name, ew, eh
-                            )
-                            items.append((cast(np.ndarray, ei), ec))
-                        alt_e = metadata.get(ep.stem)
-                        if alt_e is not None:
-                            tile_alts.append(alt_e)
-                    while len(items) < 4:
-                        items.append(items[0])
-                    src_img, src_corners = build_mosaic(items[:4])
-                    src_alt: Optional[float] = (
-                        sum(tile_alts) / len(tile_alts) if tile_alts else None
-                    )
-                else:
-                    src_img, src_corners, src_alt = raw, corners, altitude_m
-
-                aug, aug_c, _, _ = apply_augment(
-                    src_img, src_corners, src_alt, transform, aug_cfg
-                )
-                draw_corners(aug, aug_c)
-                overlay_info(aug, img_path.stem, opt.augment)
-                return _resize_for_display(aug, opt.max_dim)
-
-            frame = render()
-            cv2.imshow("view_data", frame)
-            cv2.resizeWindow("view_data", frame.shape[1], frame.shape[0])
-
-            while True:
-                key = cv2.waitKey(0) & 0xFF
-                if key == ord("q"):
-                    quit_requested = True
-                    break
-                elif key == ord("r"):
-                    frame = render()
-                    cv2.imshow("view_data", frame)
-                    cv2.resizeWindow(
-                        "view_data", frame.shape[1], frame.shape[0]
-                    )
-                elif key == ord("s"):
-                    save_dir = g.RESULTS_DIR / "viz_augmented"
-                    save_dir.mkdir(parents=True, exist_ok=True)
-                    out_path = save_dir / f"{img_path.stem}_aug.jpg"
-                    cv2.imwrite(str(out_path), frame)
-                    print(f"Saved {out_path}")
-                else:
-                    idx += 1
-                    break
-
-    # ------------------------------------------------------------------
-    # Raw mode
-    # ------------------------------------------------------------------
     else:
         print(
             f"Showing {len(images)} images from '{opt.split}' split. "
             "Press any key to advance, 's' to save, 'q' to quit."
         )
-
-        quit_requested = False
-        for img_path in images:
-            if quit_requested:
-                break
-            img = cv2.imread(str(img_path))
-            if img is None:
-                continue
-            lbl_path = lbl_dir / img_path.with_suffix(".txt").name
-            draw_obb(img, lbl_path)
-            img = _resize_for_display(img, opt.max_dim)
-
-            cv2.imshow("view_data", img)
-            cv2.resizeWindow("view_data", img.shape[1], img.shape[0])
-            while True:
-                key = cv2.waitKey(0) & 0xFF
-                if key == ord("s"):
-                    save_dir = g.RESULTS_DIR / "viz"
-                    save_dir.mkdir(parents=True, exist_ok=True)
-                    out_path = save_dir / img_path.name
-                    cv2.imwrite(str(out_path), img)
-                    print(f"Saved {out_path}")
-                elif key == ord("q"):
-                    quit_requested = True
-                    break
-                else:
-                    break
+        render_fn = lambda p: _render_raw_frame(p, lbl_dir, opt.max_dim)
+        _run_viewer(
+            images, render_fn,
+            g.RESULTS_DIR / "viz",
+            lambda p: p.name,
+        )
 
     cv2.destroyAllWindows()
 
@@ -476,8 +519,8 @@ def parse_opt() -> argparse.Namespace:
     parser.add_argument(
         "--augment", type=str, default=None,
         help=(
-            "Augmentation preset stem from augmentations/ dir (e.g. 'paper', 'aas1'). "
-            "Enables the full training pipeline."
+            "Augmentation preset stem from augmentations/ dir "
+            "(e.g. 'paper', 'aas1'). Enables the full training pipeline."
         ),
     )
     parser.add_argument(
