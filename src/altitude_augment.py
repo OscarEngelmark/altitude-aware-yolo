@@ -42,7 +42,7 @@ from ultralytics.utils.torch_utils import unwrap_model
 import globals as g
 
 SCALE_FLOOR = 0.1
-SCALE_CEILING = 2.0
+SCALE_CEILING = 3.0
 
 
 def compute_scale_bounds(
