@@ -2,7 +2,7 @@
 
 Panels (shared x-axis):
   (1) Unmodified             — raw estimated altitudes
-  (2) Scale + mosaic         — standard YOLOv9 scale jitter
+  (2) Scale                  — standard YOLOv9 scale jitter
   (3) Altitude-aware scale   — per-frame h_target sampling (AAS)
 
 When --style is omitted both 'report' and 'ppt' versions are saved.
@@ -11,7 +11,7 @@ Usage
 -----
     cd src && python plots/aug_comparison.py
     cd src && python plots/aug_comparison.py --split train
-    cd src && python plots/aug_comparison.py --scale 0.7 --mosaic
+    cd src && python plots/aug_comparison.py --scale 0.7
     cd src && python plots/aug_comparison.py --alt-min 80 --alt-max 400
     cd src && python plots/aug_comparison.py --style report
 """
@@ -40,11 +40,7 @@ from altitude_dist import (
 
 DEFAULT_SCALE = 0.5
 
-COLORS = {
-    "raw":   "#4C72B0",
-    "scale": "#DD8452",
-    "aas":   "#9467BD",
-}
+COLORS = {"raw": "#4C72B0", "scale": "#DD8452", "aas": "#9467BD"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,15 +51,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--out", type=Path, default=None,
-        help=(
-            "Output path "
-            "(default: results/aug_comparison_{split}_{style}.{ext})"
-        ),
+        help="Output path (default: results/aug_comparison_{split}_{style}.{ext})",
     )
     p.add_argument(
         "--style", choices=style.STYLES, default=None,
-        help="Output style: 'report' (PDF) or 'ppt' (PNG). "
-             "Omit to produce both.",
+        help="Output style: 'report' (PDF) or 'ppt' (PNG). Omit to produce both.",
     )
     p.add_argument(
         "--bins", type=int, default=100,
@@ -72,14 +64,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--scale", type=float, default=DEFAULT_SCALE,
         help=f"Scale jitter range for panel 2 (default: {DEFAULT_SCALE})",
-    )
-    p.add_argument(
-        "--mosaic", action="store_true",
-        help="Apply mosaic ×2 altitude factor for panel 2",
-    )
-    p.add_argument(
-        "--mosaic-aas", action="store_true", dest="mosaic_aas",
-        help="Apply mosaic ×2 effective-altitude factor for panel 3 (AAS)",
     )
     p.add_argument(
         "--n-samples", type=int, default=DEFAULT_N_SAMPLES,
@@ -171,7 +155,6 @@ def main() -> None:
         scale=args.scale,
         n_samples=args.n_samples,
         rng=rng,
-        mosaic=args.mosaic,
     )
 
     mode: Optional[float] = args.alt_mode
@@ -185,22 +168,15 @@ def main() -> None:
         rng=rng,
         dist=args.dist,
         alt_mode=mode,
-        mosaic=args.mosaic_aas,
     )
 
-    scale_title = f"Mosaic + Scale = {args.scale}"
-    aas_mosaic_prefix = "Mosaic + " if args.mosaic_aas else ""
+    scale_title = f"Scale = {args.scale}"
     if args.dist == "triangular":
         aas_title = (
-            f"{aas_mosaic_prefix}AAS — "
-            f"triangular({args.alt_min:.0f}, "
-            f"{mode:.0f}, {args.alt_max:.0f}) m"
+            f"AAS — triangular({args.alt_min:.0f}, {mode:.0f}, {args.alt_max:.0f}) m"
         )
     else:
-        aas_title = (
-            f"{aas_mosaic_prefix}AAS — "
-            f"uniform({args.alt_min:.0f}, {args.alt_max:.0f}) m"
-        )
+        aas_title = (f"AAS — uniform({args.alt_min:.0f}, {args.alt_max:.0f}) m")
 
     rows: List[Tuple[str, List[float], List[float], str]] = [
         ("Unmodified",  alts,       weights,       COLORS["raw"]),
@@ -235,9 +211,7 @@ def main() -> None:
                 )
             })
             fs = (PPT_WIDTH, fs[1])
-        fig, axes = plt.subplots(
-            3, 1, figsize=fs, sharex=True, squeeze=False
-        )
+        fig, axes = plt.subplots(3, 1, figsize=fs, sharex=True, squeeze=False)
         plot_panels(
             rows[:n_panels], list(axes[:n_panels, 0]),
             bins=args.bins, x_max=args.x_max,

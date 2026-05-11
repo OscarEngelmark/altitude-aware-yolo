@@ -1,9 +1,8 @@
 """
 Baseline YOLOv9-OBB training script.
 
-Builds the model from src/configs and transfers backbone weights from the
-pretrained COCO checkpoint (downloaded automatically by ultralytics on first
-use).
+Builds the model from src/configs and transfers backbone weights from the pretrained 
+COCO checkpoint (downloaded automatically by ultralytics on first use).
 
 Usage
 -----
@@ -17,8 +16,7 @@ python src/train.py --resume --run-name exp-01
 # Resume from a specific checkpoint file
 python src/train.py --resume runs/exp-01/weights/epoch50.pt --run-name exp-01
 
-# Resume with a manually supplied W&B run ID (for runs started without
-# --resume support)
+# Resume with a manually supplied W&B run ID (for runs started without --resume support)
 python src/train.py --resume --run-name exp-01 --wandb-id abc12345
 """
 
@@ -53,7 +51,7 @@ DEVICE: str = "0" if torch.cuda.is_available() else "cpu"
 # ── defaults ─────────────────────────────────────────────────────────────────
 
 DEFAULT_EPOCHS   = 100
-DEFAULT_PATIENCE = 20
+DEFAULT_PATIENCE = 0
 DEFAULT_IMGSZ    = 1920
 DEFAULT_BATCH    = 4
 DEFAULT_WORKERS  = 16
@@ -158,11 +156,11 @@ def parse_args() -> argparse.Namespace:
 
     g_alt = p.add_argument_group("altitude-aware scale")
     g_alt.add_argument(
-        "--altitude-aware-scale", action="store_true",
+        "--aas", action="store_true",
         dest="altitude_aware_scale",
         help=(
-            "use altitude-aware scale augmentation: sample "
-            "h_target ~ U(alt_min, alt_max), apply s = h / h_target"
+            "use altitude-aware scale augmentation: "
+            "sample h_target ~ dist(alt_min, alt_max), apply s = h / h_target"
         ),
     )
     g_alt.add_argument(
@@ -174,10 +172,15 @@ def parse_args() -> argparse.Namespace:
         help="upper bound of target altitude range in metres (default: 300)",
     )
     g_alt.add_argument(
+        "--alt-dist", choices=["uniform", "triangular"], default="uniform",
+        dest="alt_dist",
+        help="target altitude distribution: uniform (default) or triangular",
+    )
+    g_alt.add_argument(
         "--alt-mode", type=float, default=None, dest="alt_mode",
         help=(
-            "peak of a triangular target altitude distribution in metres; "
-            "omit for uniform U(alt_min, alt_max)"
+            "peak of the triangular target altitude distribution in metres "
+            "(only used with --alt-dist triangular; defaults to midpoint)"
         ),
     )
 
@@ -186,9 +189,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def _validate_args(
-        p: argparse.ArgumentParser, args: argparse.Namespace
-) -> None:
+def _validate_args(p: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Raise p.error for cross-argument constraint violations."""
     if args.wandb_id and not args.resume:
         p.error("--wandb-id requires --resume")
@@ -198,9 +199,11 @@ def _validate_args(
 
     alt_flags = [args.alt_min, args.alt_max, args.alt_mode]
     if any(v is not None for v in alt_flags) and not args.altitude_aware_scale:
-        p.error(
-            "--alt-min/--alt-max/--alt-mode require --altitude-aware-scale"
-        )
+        p.error("--alt-min/--alt-max/--alt-mode require --altitude-aware-scale")
+    if args.alt_dist != "uniform" and not args.altitude_aware_scale:
+        p.error("--alt-dist requires --altitude-aware-scale")
+    if args.alt_mode is not None and args.alt_dist != "triangular":
+        p.error("--alt-mode requires --alt-dist triangular")
 
     lo = args.alt_min if args.alt_min is not None else 100.0
     hi = args.alt_max if args.alt_max is not None else 300.0
@@ -287,6 +290,7 @@ def resolve_train_kwargs(
         {
             "alt_min":  args.alt_min  if args.alt_min  is not None else 100.0,
             "alt_max":  args.alt_max  if args.alt_max  is not None else 300.0,
+            "alt_dist": args.alt_dist,
             "alt_mode": args.alt_mode,
         }
         if args.altitude_aware_scale else {}
@@ -340,9 +344,7 @@ def attach_callbacks(model: YOLO, args: argparse.Namespace) -> None:
     if args.freeze > 0 and args.unfreeze_epoch > 0:
         model.add_callback(
             "on_train_epoch_start",
-            make_unfreeze_callback(
-                args.unfreeze_epoch, args.lr_unfreeze_factor
-            ),
+            make_unfreeze_callback(args.unfreeze_epoch, args.lr_unfreeze_factor)
         )
 
 # ── main ─────────────────────────────────────────────────────────────────────

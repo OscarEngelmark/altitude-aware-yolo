@@ -1,0 +1,12 @@
+# Augmentation for use with Altitude-Aware Scaling (AAS)
+hsv_h: 0.05        # hue shift ±5%
+hsv_s: 0.7         # saturation scale ±70%
+hsv_v: 0.4         # brightness scale ±40%
+degrees: 45.0      # random rotation ±45°
+translate: 0.3     # random translation ±30% of image size
+scale: 0.9         # random zoom ±90% (ignored when using AAS)
+fliplr: 0.5        # horizontal flip
+flipud: 0.5        # vertical flip
+mosaic: 1.0        # tile 4 images; transforms apply to the composite
+mixup: 0.5         # 50% chance of alpha-blending two mosaics
+copy_paste: 0.5    # 50% chance of pasting object instances across images

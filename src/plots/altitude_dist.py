@@ -83,10 +83,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--mosaic", action="store_true",
-        help="Apply mosaic x2 altitude factor (disabled by default)",
-    )
-    p.add_argument(
         "--n-samples", type=int, default=DEFAULT_N_SAMPLES,
         dest="n_samples",
         help=(
@@ -158,24 +154,21 @@ def augment_train(
     scale: float,
     n_samples: int,
     rng: np.random.Generator,
-    mosaic: bool,
 ) -> Tuple[List[float], List[float]]:
     """Return (augmented_alts, augmented_weights) for the training split.
 
-    apparent_altitude = actual * mosaic_factor / U(1-scale, 1+scale)
-    where mosaic_factor = 2 (mosaic) or 1 (no mosaic).
+    apparent_altitude = actual / U(1-scale, 1+scale)
     Weights are divided by n_samples to preserve total car count.
-    When scale=0 and mosaic=False, returns the inputs unchanged.
+    When scale=0, returns the inputs unchanged.
     """
-    if scale == 0.0 and not mosaic:
+    if scale == 0.0:
         return alts, weights
 
     alts_arr = np.array(alts)
     w_arr = np.array(weights) / n_samples
-    mosaic_factor = 2.0 if mosaic else 1.0
 
     raw = rng.uniform(1.0 - scale, 1.0 + scale, size=(len(alts), n_samples))
-    aug_alts = (alts_arr[:, None] * mosaic_factor / raw).ravel()
+    aug_alts = (alts_arr[:, None] / raw).ravel()
     aug_weights = np.repeat(w_arr, n_samples)
 
     mask = aug_alts > 0
@@ -191,16 +184,14 @@ def augment_train_altitude_aware(
     rng: np.random.Generator,
     dist: str = "uniform",
     alt_mode: Optional[float] = None,
-    mosaic: bool = False,
 ) -> Tuple[List[float], List[float]]:
     """Altitude-aware augmentation: sample h_target from the chosen
     distribution over [alt_min, alt_max], compute s = eff_alt / h_target,
     clamp to [SCALE_FLOOR, SCALE_CEILING], then apparent_altitude =
     eff_alt / s.  When s is unclamped, apparent_altitude == h_target exactly.
 
-    mosaic=True mirrors AltitudeAwareMosaic: eff_alt = sqrt(4) * h = 2h,
-    shifting the ceiling-clamp threshold and clamped apparent altitudes
-    upward by the same factor.
+    Mosaic uses a center crop (not a downscale), so objects appear at full
+    tile resolution and eff_alt = h (no factor needed regardless of mosaic).
 
     dist='uniform'    -> h_target ~ U(alt_min, alt_max)
     dist='triangular' -> h_target ~ Triangular(alt_min, alt_mode, alt_max)
@@ -209,8 +200,7 @@ def augment_train_altitude_aware(
     alts_arr = np.array(alts)
     w_arr = np.array(weights) / n_samples
 
-    mosaic_factor = 2.0 if mosaic else 1.0
-    eff_alts = alts_arr * mosaic_factor
+    eff_alts = alts_arr
 
     size = (len(alts), n_samples)
     if dist == "triangular":
@@ -320,17 +310,12 @@ def main() -> None:
             scale=args.scale,
             n_samples=args.n_samples,
             rng=rng,
-            mosaic=args.mosaic,
         )
-        train_augmented = args.scale != 0.0 or args.mosaic
+        train_augmented = args.scale != 0.0
         if train_augmented:
-            mosaic_str = (
-                f"2/U(1±{args.scale})" if args.mosaic
-                else f"1/U(1±{args.scale})"
-            )
             title = (
                 f"Altitude distribution — train augmented "
-                f"(scale={args.scale}, factor={mosaic_str})"
+                f"(scale={args.scale})"
             )
         else:
             title = "Altitude distribution by split"

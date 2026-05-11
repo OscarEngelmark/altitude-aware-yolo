@@ -132,8 +132,7 @@ def parse_args() -> argparse.Namespace:
     wt = p.add_mutually_exclusive_group(required=True)
     wt.add_argument(
         "--weights", type=str, nargs="+",
-        help="one or more filenames under <run>/weights/, e.g. best.pt "
-             "epoch45.pt",
+        help="one or more filenames under <run>/weights/, e.g. best.pt epoch45.pt",
     )
     wt.add_argument(
         "--all-weights", action="store_true",
@@ -197,7 +196,7 @@ def evaluate_checkpoint(
     }
 
     s = split.capitalize()
-    print(f"\n{s} mAP50:      {overall['mAP50']:.4f}")
+    print(f"\n{s} mAP50:    {overall['mAP50']:.4f}")
     print(f"{s} mAP50-95:   {overall['mAP50-95']:.4f}")
     print(f"{s} precision:  {overall['precision']:.4f}")
     print(f"{s} recall:     {overall['recall']:.4f}")
@@ -214,9 +213,7 @@ def main() -> None:
     if args.all_weights:
         weights_paths = sorted(weights_dir.glob("*.pt"))
         if not weights_paths:
-            raise FileNotFoundError(
-                f"No .pt files found in {weights_dir}"
-            )
+            raise FileNotFoundError(f"No .pt files found in {weights_dir}")
     else:
         weights_paths = []
         for wf in args.weights:
@@ -228,9 +225,7 @@ def main() -> None:
     dataset_yaml = write_dataset_yaml()
     print(f"Dataset:  {dataset_yaml}")
     print(f"Device:   {DEVICE}")
-    print(
-        f"Evaluating {len(weights_paths)} checkpoint(s) from run '{args.run}'"
-    )
+    print(f"Evaluating {len(weights_paths)} checkpoint(s) from run '{args.run}'")
 
     single = len(weights_paths) == 1
     for weights_path in weights_paths:

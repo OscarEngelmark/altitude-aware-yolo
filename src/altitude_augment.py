@@ -1,28 +1,27 @@
 """
 Altitude-aware scale augmentation for YOLO OBB training.
 
-For each training frame at altitude h, a target altitude h_target is
-sampled and scale s = h / h_target is applied, so the apparent altitude
-equals h_target (up to clamping at SCALE_FLOOR / SCALE_CEILING).
+For each training frame at altitude h, a target altitude h_target is sampled and 
+scale s = h / h_target is applied, so the apparent altitude equals h_target (up to 
+clamping at SCALE_FLOOR / SCALE_CEILING).
 
 Two target distributions are supported:
-  uniform:    h_target ~ U(alt_min, alt_max)          -> flat distribution
+  uniform:    h_target ~ U(alt_min, alt_max)
   triangular: h_target ~ Triangular(alt_min, alt_max, alt_mode)
 
 Public API
 ----------
 AltitudeAwareOBBTrainer   pass to YOLO.train(trainer=...)
-compute_scale_bounds       utility exposed for testing / plotting
+compute_scale_bounds      utility exposed for testing / plotting
 
 Notes
 -----
-Altitude is injected into the labels dict by AltitudeAwareYOLODataset
-and read by AltitudeAwareRandomPerspective.  When mosaic=0 the labels
-dict passes through Mosaic unchanged.  When mosaic>0, AltitudeAwareMosaic
-preserves altitude_m as mosaic_factor * mean(h_i), so the affine transform
-fires with a valid effective altitude.  Because apparent_alt = h_target
-regardless of the effective altitude, the triangular distribution propagates
-through the mosaic path unchanged.
+Altitude is injected into the labels dict by AltitudeAwareYOLODataset and read by 
+AltitudeAwareRandomPerspective. When mosaic=0 the labels dict passes through Mosaic 
+unchanged. When mosaic>0, AltitudeAwareMosaic preserves altitude_m as mean(h_i), so the 
+affine transform fires with a valid effective altitude. Because apparent_alt = h_target 
+regardless of the effective altitude, the custom distribution propagates through the
+mosaic path unchanged.
 """
 
 import json
@@ -37,13 +36,13 @@ import torch.nn as nn
 from ultralytics.data.augment import Compose, Mosaic, RandomPerspective
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.models.yolo.obb.train import OBBTrainer
-from ultralytics.utils import DEFAULT_CFG, LOGGER, colorstr
+from ultralytics.utils import DEFAULT_CFG, colorstr
 from ultralytics.utils.torch_utils import unwrap_model
 
 import globals as g
 
 SCALE_FLOOR = 0.1
-SCALE_CEILING = 3.0
+SCALE_CEILING = 2.0
 
 
 def compute_scale_bounds(
@@ -64,9 +63,8 @@ def compute_scale_bounds(
 class AltitudeAwareRandomPerspective(RandomPerspective):
     """RandomPerspective that samples scale from altitude-dependent bounds.
 
-    Reads altitude_m from the labels dict (injected by
-    AltitudeAwareYOLODataset) and samples scale from
-    [h/alt_max, h/alt_min] instead of [1-scale, 1+scale].
+    Reads altitude_m from the labels dict (injected by AltitudeAwareYOLODataset) and 
+    samples scale from [h/alt_max, h/alt_min] instead of [1-scale, 1+scale].
     Falls back to symmetric bounds when altitude_m is absent.
     """
 
@@ -74,12 +72,14 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
         self,
         alt_min: float = 100.0,
         alt_max: float = 300.0,
+        dist: str = "uniform",
         alt_mode: Optional[float] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.alt_min = alt_min
         self.alt_max = alt_max
+        self.dist = dist
         self.alt_mode = alt_mode
         self._altitude_m: Optional[float] = None
 
@@ -101,55 +101,42 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
         R = np.eye(3, dtype=np.float32)
         a = random.uniform(-self.degrees, self.degrees)
         if self._altitude_m is not None:
-            if self.alt_mode is not None:
-                h_target = random.triangular(
-                    self.alt_min, self.alt_max, self.alt_mode
+            if self.dist == "triangular":
+                mode = (
+                    self.alt_mode
+                    if self.alt_mode is not None
+                    else (self.alt_min + self.alt_max) / 2
                 )
+                h_target = random.triangular(self.alt_min, self.alt_max, mode)
             else:
                 h_target = random.uniform(self.alt_min, self.alt_max)
-            s = float(np.clip(
-                self._altitude_m / h_target, SCALE_FLOOR, SCALE_CEILING
-            ))
+            s = float(np.clip(self._altitude_m / h_target, SCALE_FLOOR, SCALE_CEILING))
         else:
             s = random.uniform(1.0 - self.scale, 1.0 + self.scale)
         R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
 
         S = np.eye(3, dtype=np.float32)
-        S[0, 1] = math.tan(
-            random.uniform(-self.shear, self.shear) * math.pi / 180
-        )
-        S[1, 0] = math.tan(
-            random.uniform(-self.shear, self.shear) * math.pi / 180
-        )
+        S[0, 1] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)
+        S[1, 0] = math.tan(random.uniform(-self.shear, self.shear) * math.pi / 180)
 
         T = np.eye(3, dtype=np.float32)
         T[0, 2] = (
-            random.uniform(0.5 - self.translate, 0.5 + self.translate)
-            * self.size[0]
+            random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[0]
         )
         T[1, 2] = (
-            random.uniform(0.5 - self.translate, 0.5 + self.translate)
-            * self.size[1]
+            random.uniform(0.5 - self.translate, 0.5 + self.translate) * self.size[1]
         )
 
         M = T @ S @ R @ P @ C
 
-        if (
-            (border[0] != 0)
-            or (border[1] != 0)
-            or (M != np.eye(3)).any()
-        ):
+        if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():
             if self.perspective:
                 img = cv2.warpPerspective(
-                    img, M,
-                    dsize=self.size,
-                    borderValue=(114, 114, 114),
+                    img, M, dsize=self.size, borderValue=(114, 114, 114),
                 )
             else:
                 img = cv2.warpAffine(
-                    img, M[:2],
-                    dsize=self.size,
-                    borderValue=(114, 114, 114),
+                    img, M[:2], dsize=self.size, borderValue=(114, 114, 114),
                 )
             if img.ndim == 2:
                 img = img[..., None]
@@ -157,9 +144,7 @@ class AltitudeAwareRandomPerspective(RandomPerspective):
 
     def __call__(self, labels: Dict) -> Dict:
         altitude_m = labels.get("altitude_m")
-        self._altitude_m = (
-            float(altitude_m) if altitude_m is not None else None
-        )
+        self._altitude_m = float(altitude_m) if altitude_m is not None else None
         return super().__call__(labels)
 
 
@@ -167,17 +152,19 @@ def _swap_affine(
     transforms: Compose,
     alt_min: float,
     alt_max: float,
+    dist: str = "uniform",
     alt_mode: Optional[float] = None,
 ) -> None:
     """In-place: replace RandomPerspective with AltitudeAwareRandomPerspective
     everywhere inside a Compose tree."""
     for i, t in enumerate(transforms.transforms):
         if isinstance(t, Compose):
-            _swap_affine(t, alt_min, alt_max, alt_mode)
+            _swap_affine(t, alt_min, alt_max, dist, alt_mode)
         elif type(t) is RandomPerspective:
             transforms.transforms[i] = AltitudeAwareRandomPerspective(
                 alt_min=alt_min,
                 alt_max=alt_max,
+                dist=dist,
                 alt_mode=alt_mode,
                 degrees=t.degrees,
                 translate=t.translate,
@@ -192,17 +179,14 @@ def _swap_affine(
 class AltitudeAwareMosaic(Mosaic):
     """Mosaic that preserves altitude_m as the effective altitude.
 
-    Ultralytics' Mosaic._cat_labels builds a fresh labels dict that drops
-    all non-standard keys.  This override re-inserts altitude_m as the
-    effective apparent altitude of the mosaic, so that
-    AltitudeAwareRandomPerspective can still fire with a valid altitude
-    after mosaicing.
+    Ultralytics' Mosaic._cat_labels builds a fresh labels dict that drops all 
+    non-standard keys. This override re-inserts altitude_m so that
+    AltitudeAwareRandomPerspective can still fire with a valid altitude after mosaicing.
 
-    Mosaic places n frames (each imgsz x imgsz) on a sqrt(n)*imgsz canvas
-    then crops back to imgsz.  Each frame therefore contributes at
-    1/sqrt(n) linear scale, making objects appear sqrt(n)x further away.
-    We store sqrt(n) * mean(h_i) so the perspective transform targets the
-    correct h_target.
+    Ultralytics mosaic places n tiles (each imgsz×imgsz) on a sqrt(n)*imgsz canvas and 
+    center-crops back to imgsz via the RandomPerspective warp. Because this is a crop 
+    (not a downscale), each tile's objects appear at full pixel resolution in the 
+    output. The effective altitude is therefore simply mean(h_i).
     """
 
     def _cat_labels(self, mosaic_labels: List) -> Dict:
@@ -213,9 +197,7 @@ class AltitudeAwareMosaic(Mosaic):
             if lbl.get("altitude_m") is not None
         ]
         if alts:
-            mosaic_factor = int(self.n ** 0.5)  # 2 for n=4, 3 for n=9
-            mean_alt = sum(alts) / len(alts)
-            final_labels["altitude_m"] = mosaic_factor * mean_alt
+            final_labels["altitude_m"] = sum(alts) / len(alts)
         return final_labels
 
 
@@ -226,10 +208,7 @@ def _swap_mosaic(transforms: Compose) -> None:
             _swap_mosaic(t)
         elif type(t) is Mosaic:
             new_mosaic = AltitudeAwareMosaic(
-                dataset=t.dataset,
-                imgsz=t.imgsz,
-                p=t.p,
-                n=t.n,
+                dataset=t.dataset, imgsz=t.imgsz, p=t.p, n=t.n,
             )
             new_mosaic.pre_transform = t.pre_transform
             transforms.transforms[i] = new_mosaic
@@ -244,12 +223,14 @@ class AltitudeAwareYOLODataset(YOLODataset):
         *args,
         alt_min: float = 100.0,
         alt_max: float = 300.0,
+        dist: str = "uniform",
         alt_mode: Optional[float] = None,
         metadata_path: Path = g.OUT_DIR / "metadata.json",
         **kwargs,
     ) -> None:
         self.alt_min = alt_min
         self.alt_max = alt_max
+        self.dist = dist
         self.alt_mode = alt_mode
         with open(metadata_path) as f:
             raw: dict = json.load(f)
@@ -272,15 +253,17 @@ class AltitudeAwareYOLODataset(YOLODataset):
         transforms = super().build_transforms(hyp)
         if self.augment:
             _swap_mosaic(transforms)
-            _swap_affine(transforms, self.alt_min, self.alt_max, self.alt_mode)
+            _swap_affine(
+                transforms, self.alt_min, self.alt_max, self.dist, self.alt_mode
+            )
         return transforms
 
 
 class AltitudeAwareOBBTrainer(OBBTrainer):
     """OBBTrainer that uses AltitudeAwareYOLODataset for the training split.
 
-    alt_min and alt_max are extracted from the overrides dict (pass them
-    as keyword arguments to YOLO.train).
+    alt_min and alt_max are extracted from the overrides dict (pass them as keyword 
+    arguments to YOLO.train).
     """
 
     def __init__(
@@ -292,41 +275,10 @@ class AltitudeAwareOBBTrainer(OBBTrainer):
         overrides = dict(overrides or {})
         self.alt_min = float(overrides.pop("alt_min", 100.0))
         self.alt_max = float(overrides.pop("alt_max", 300.0))
+        self.dist = str(overrides.pop("alt_dist", "uniform"))
         _mode = overrides.pop("alt_mode", None)
         self.alt_mode = float(_mode) if _mode is not None else None
         super().__init__(cfg, overrides, _callbacks)
-
-    def optimizer_step(self) -> None:
-        super().optimizer_step()
-        if not self.ema:
-            return
-        ema_module = unwrap_model(self.ema.ema)
-        ema_sd = ema_module.state_dict()
-        if not any(
-            v.is_floating_point() and not v.isfinite().all()
-            for v in ema_sd.values()
-        ):
-            return
-        model_sd = unwrap_model(cast(nn.Module, self.model)).state_dict()
-        if all(
-            not v.is_floating_point() or v.isfinite().all()
-            for v in model_sd.values()
-        ):
-            for name, p in ema_module.named_parameters():
-                if name in model_sd:
-                    p.data.copy_(model_sd[name])
-            for name, b in ema_module.named_buffers():
-                if name in model_sd:
-                    b.data.copy_(model_sd[name])
-            LOGGER.warning(
-                "NaN/Inf in EMA after update; "
-                "reset to current model weights"
-            )
-        else:
-            LOGGER.warning(
-                "NaN/Inf in both EMA and model weights; "
-                "consider stopping and resuming from last checkpoint"
-            )
 
     def build_dataset(
         self,
@@ -356,5 +308,6 @@ class AltitudeAwareOBBTrainer(OBBTrainer):
             fraction=self.args.fraction,
             alt_min=self.alt_min,
             alt_max=self.alt_max,
+            dist=self.dist,
             alt_mode=self.alt_mode,
         )
