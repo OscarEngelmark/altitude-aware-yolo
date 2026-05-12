@@ -42,14 +42,15 @@ METRICS = [
 
 
 CSV_PATH = g.RESULTS_DIR / "evaluations.csv"
-CSV_FIELDS = ["timestamp", "run_name", "weights", "split", "precision",
-              "recall", "mAP50", "mAP50-95"]
+CSV_FIELDS = ["timestamp", "run_name", "weights", "split",
+              "precision", "recall", "mAP50", "mAP50-95", "tta"]
 
 
 def save_metrics_csv(
     weights: Path,
     overall: Dict[str, float],
     split: str,
+    augment: bool = False,
 ) -> None:
     g.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     write_header = not CSV_PATH.exists()
@@ -62,6 +63,7 @@ def save_metrics_csv(
             "run_name":   weights.parent.parent.name,
             "weights":    weights.name,
             "split":      split,
+            "tta":        str(augment).lower(),
             "precision":  f"{overall['precision']:.4f}",
             "recall":     f"{overall['recall']:.4f}",
             "mAP50":      f"{overall['mAP50']:.4f}",
@@ -157,6 +159,10 @@ def parse_args() -> argparse.Namespace:
         "--split", type=str, default="test", choices=["test", "val"],
         help="dataset split to evaluate on (default: test)",
     )
+    p.add_argument(
+        "--tta", action="store_true",
+        help="enable Test Time Augmentation (augment=True) during validation",
+    )
     return p.parse_args()
 
 
@@ -168,6 +174,7 @@ def evaluate_checkpoint(
     imgsz: int,
     batch: int,
     workers: int,
+    augment: bool = False,
 ) -> None:
     print(f"\n{'='*60}")
     print(f"Weights:  {weights_path}")
@@ -185,6 +192,7 @@ def evaluate_checkpoint(
         device=DEVICE,
         project=str(g.RUNS_DIR),
         name=run_name,
+        augment=augment,
     )
 
     box = results.box
@@ -202,7 +210,7 @@ def evaluate_checkpoint(
     print(f"{s} recall:     {overall['recall']:.4f}")
     out = plot_metrics(overall, get_last_bucket_metrics(), run_name, split)
     print(f"Plot saved to:  {out}")
-    save_metrics_csv(weights_path, overall, split)
+    save_metrics_csv(weights_path, overall, split, augment)
     print(f"Metrics saved to: {CSV_PATH}")
 
 
@@ -237,6 +245,7 @@ def main() -> None:
         evaluate_checkpoint(
             weights_path, run_name, dataset_yaml,
             args.split, args.imgsz, args.batch, args.workers,
+            augment=args.tta,
         )
 
 
