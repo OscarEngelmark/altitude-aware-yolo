@@ -1,8 +1,9 @@
-"""Visualize processed frames with OBB labels, optionally with augmentations.
+"""Visualize processed frames: raw GT labels, augmented, or model predictions.
 
-Without --augment: shows raw frames with ground-truth OBB labels.
-With --augment: applies the full training augmentation pipeline
-(mosaic -> affine -> HSV -> flips) using parameters from the chosen preset.
+Modes (mutually exclusive):
+  default          raw frames with ground-truth OBB labels
+  --augment <preset>  full training pipeline (mosaic→affine→HSV→flips)
+  --run <run-name>    model predictions from a trained checkpoint
 
 Usage:
     cd src && python view_data.py
@@ -11,9 +12,12 @@ Usage:
     cd src && python view_data.py --augment paper --max 20
     cd src && python view_data.py --augment aas2 --source Asjo --max 50
     cd src && python view_data.py --augment paper --alt-min 80 --alt-max 320
+    cd src && python view_data.py --run yolov9s-aas-12 --split test --show-gt
+    cd src && python view_data.py --run yolov9s-aas-12 --weights epoch45.pt
 
-Controls: any key -> next | s -> save | q -> quit
-Augmented mode also: r -> re-augment same image
+Controls (raw/augmented): any key -> next | s -> save | q -> quit
+  Augmented also: r -> re-augment same image
+Controls (predictions):   any key -> next | p/← -> prev | s -> save | q -> quit
 """
 import argparse
 import json
@@ -327,15 +331,7 @@ def draw_corners(
         cv2.polylines(img, [box], isClosed=True, color=color, thickness=thickness)
 
 
-def overlay_info(
-    img: np.ndarray,
-    stem: str,
-    augment_name: str,
-) -> None:
-    lines = [
-        stem,
-        f"Augmentation: {augment_name}.yaml",
-    ]
+def _overlay_lines(img: np.ndarray, lines: List[str]) -> None:
     font = cv2.FONT_HERSHEY_SIMPLEX
     fscale = 0.55
     thick = 1
@@ -351,6 +347,14 @@ def overlay_info(
             img, text, (pad, y),
             font, fscale, (255, 255, 255), thick, cv2.LINE_AA,
         )
+
+
+def overlay_info(
+    img: np.ndarray,
+    stem: str,
+    augment_name: str,
+) -> None:
+    _overlay_lines(img, [stem, f"Augmentation: {augment_name}.yaml"])
 
 
 def _resize_for_display(
@@ -463,6 +467,109 @@ def _run_viewer(
 
 
 # ---------------------------------------------------------------------------
+# Predictions mode
+# ---------------------------------------------------------------------------
+
+def _render_prediction_frame(
+    img_path: Path,
+    result: Any,
+    metadata: Dict[str, float],
+    lbl_dir: Path,
+    show_gt: bool,
+    max_dim: Optional[int],
+) -> Optional[np.ndarray]:
+    img = cv2.imread(str(img_path))
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+
+    if show_gt:
+        gt_corners = load_obb_corners(
+            lbl_dir / img_path.with_suffix(".txt").name, w, h
+        )
+        draw_corners(img, gt_corners, color=(0, 255, 0))
+
+    n_pred = 0
+    conf_str = ""
+    if result.obb is not None and len(result.obb):
+        pred_corners = result.obb.xyxyxyxy.cpu().numpy().astype(np.int32)
+        confs = result.obb.conf.cpu().numpy()
+        n_pred = len(pred_corners)
+        conf_str = f"conf {confs.min():.2f}-{confs.max():.2f}"
+        draw_corners(img, pred_corners, color=(0, 0, 255))
+        for corners, conf in zip(pred_corners, confs):
+            cx = int(corners[:, 0].mean())
+            cy = max(int(corners[:, 1].min()) - 4, 12)
+            label = f"{conf:.2f}"
+            cv2.putText(
+                img, label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX,
+                0.45, (0, 0, 0), 2, cv2.LINE_AA,
+            )
+            cv2.putText(
+                img, label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX,
+                0.45, (0, 200, 255), 1, cv2.LINE_AA,
+            )
+
+    alt = metadata.get(img_path.stem)
+    alt_str = f"{alt:.0f} m" if alt is not None else "unknown"
+    pred_info = f"Pred: {n_pred} boxes" + (f"  {conf_str}" if conf_str else "")
+    info_lines: List[str] = [img_path.name, f"Alt: {alt_str}  |  {pred_info}"]
+    if show_gt:
+        info_lines.append("Green = GT  |  Red = Pred")
+    _overlay_lines(img, info_lines)
+    return _resize_for_display(img, max_dim)
+
+
+def _run_predictions_viewer(
+    img_paths: List[Path],
+    all_results: List[Any],
+    metadata: Dict[str, float],
+    lbl_dir: Path,
+    show_gt: bool,
+    max_dim: Optional[int],
+    save_dir: Path,
+) -> None:
+    n = len(img_paths)
+    idx = 0
+    while True:
+        frame = _render_prediction_frame(
+            img_paths[idx], all_results[idx],
+            metadata, lbl_dir, show_gt, max_dim,
+        )
+        if frame is None:
+            print(f"Could not read {img_paths[idx].name}, skipping.")
+            idx = min(idx + 1, n - 1)
+            continue
+
+        cv2.imshow(_WINDOW_NAME, frame)
+        cv2.resizeWindow(_WINDOW_NAME, frame.shape[1], frame.shape[0])
+        cv2.setWindowTitle(
+            _WINDOW_NAME, f"[{idx + 1}/{n}]  {img_paths[idx].name}"
+        )
+
+        key = cv2.waitKey(0) & 0xFF
+        if key == ord("q"):
+            break
+        elif key == ord("s"):
+            save_dir.mkdir(parents=True, exist_ok=True)
+            out = save_dir / f"{img_paths[idx].stem}_pred.jpg"
+            if out.exists():
+                counter = 1
+                while out.exists():
+                    out = (
+                        save_dir
+                        / f"{img_paths[idx].stem}_pred_{counter}.jpg"
+                    )
+                    counter += 1
+            cv2.imwrite(str(out), frame)
+            print(f"Saved {out}")
+        elif key in (ord("p"), 81):
+            idx = max(0, idx - 1)
+        else:
+            idx = min(n - 1, idx + 1)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -486,7 +593,48 @@ def main(opt: argparse.Namespace) -> None:
 
     cv2.namedWindow(_WINDOW_NAME, cv2.WINDOW_NORMAL)
 
-    if opt.augment:
+    if opt.run:
+        import os
+        import torch
+        from ultralytics import YOLO
+
+        os.environ.setdefault(
+            "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+        )
+        device = "0" if torch.cuda.is_available() else "cpu"
+        weights_path = g.RUNS_DIR / opt.run / "weights" / opt.weights
+        if not weights_path.exists():
+            sys.exit(f"Weights not found: {weights_path}")
+
+        metadata = load_metadata(g.OUT_DIR / "metadata.json")
+        save_dir = g.RESULTS_DIR / "predictions" / opt.run
+
+        print(f"Weights:  {weights_path}")
+        print(f"Split:    {opt.split}  ({len(images)} images)")
+        print(f"Device:   {device}")
+        print("Running inference — this may take a moment...")
+
+        model = YOLO(str(weights_path))
+        all_results = model.predict(
+            source=[str(p) for p in images],
+            imgsz=opt.imgsz,
+            conf=opt.conf,
+            device=device,
+            stream=False,
+            verbose=False,
+        )
+
+        print(
+            f"Done. Launching viewer.\n"
+            f"  any key = next  |  p/← = prev  |  s = save  |  q = quit\n"
+            f"  Saves go to: {save_dir}"
+        )
+        _run_predictions_viewer(
+            images, all_results, metadata,
+            lbl_dir, opt.show_gt, opt.max_dim, save_dir,
+        )
+
+    elif opt.augment:
         import yaml
         from altitude_augment import AltitudeAwareRandomPerspective
 
@@ -568,7 +716,7 @@ def main(opt: argparse.Namespace) -> None:
 def parse_opt() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Visualize OBB-labelled frames, optionally with augmentations."
+            "Visualize OBB-labelled frames: raw, augmented, or predicted."
         )
     )
     parser.add_argument(
@@ -587,13 +735,24 @@ def parse_opt() -> argparse.Namespace:
         "--max-dim", type=int, default=None, dest="max_dim",
         help="Resize display so the longest side is at most this many pixels",
     )
-    parser.add_argument(
+
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--augment", type=str, default=None,
         help=(
             "Augmentation preset stem from augmentations/ dir "
             "(e.g. 'paper', 'aas1'). Enables the full training pipeline."
         ),
     )
+    mode.add_argument(
+        "--run", type=str, default=None,
+        help=(
+            "Run directory name under runs/ (e.g. yolov9s-aas-12). "
+            "Enables predictions mode."
+        ),
+    )
+
+    # Augmentation-only flags
     parser.add_argument(
         "--alt-min", type=float, default=100.0, dest="alt_min",
         help="AAS minimum target altitude in metres (default: 100)",
@@ -614,6 +773,25 @@ def parse_opt() -> argparse.Namespace:
             "(only used with --alt-dist triangular; defaults to midpoint)"
         ),
     )
+
+    # Predictions-only flags
+    parser.add_argument(
+        "--weights", type=str, default="best.pt",
+        help="Weights filename under <run>/weights/ (default: best.pt)",
+    )
+    parser.add_argument(
+        "--conf", type=float, default=0.25,
+        help="Confidence threshold for predictions (default: 0.25)",
+    )
+    parser.add_argument(
+        "--imgsz", type=int, default=1920,
+        help="Inference image size; should match training (default: 1920)",
+    )
+    parser.add_argument(
+        "--show-gt", action="store_true", dest="show_gt",
+        help="Overlay ground-truth OBBs in green alongside predictions",
+    )
+
     return parser.parse_args()
 
 
