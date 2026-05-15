@@ -348,22 +348,61 @@ def register_prediction_callback(
         original_update = validator.update_metrics
 
         def wrapped_update(preds: Any, batch: Any) -> None:
-            for si, pred in enumerate(preds):
-                stem = Path(batch["im_file"][si]).stem
-                above = pred[pred[:, 5] >= conf_thresh] if len(pred) else pred
-                if len(above):
-                    pbatch = validator._prepare_batch(si, batch)
-                    predn = validator._prepare_pred(above, pbatch)
-                    corners = np.asarray(
-                        ops.xywhr2xyxyxyxy(predn[:, :5])
-                    ).astype(int)
-                    predictions[stem] = {
-                        "boxes": corners.tolist(),
-                        "confs": np.asarray(predn[:, 5]).tolist(),
-                    }
-                else:
+            # preds is list[dict] in ultralytics 8.4+:
+            #   pred["bboxes"] = (N, 5) [cx,cy,w,h,angle] in inference px space
+            #   pred["conf"]   = (N,)
+            #   pred["cls"]    = (N,)
+            state: Dict[str, Any] = {"si": None, "pbatch": None}
+            orig_prepare_batch = validator._prepare_batch
+            orig_prepare_pred  = validator._prepare_pred
+
+            def cap_prepare_batch(si: int, *args: Any, **kwargs: Any) -> Any:
+                pbatch = orig_prepare_batch(si, *args, **kwargs)
+                state["si"] = si
+                state["pbatch"] = pbatch
+                return pbatch
+
+            def cap_prepare_pred(*args: Any, **kwargs: Any) -> Any:
+                predn  = orig_prepare_pred(*args, **kwargs)
+                si     = state["si"]
+                pbatch = state["pbatch"]
+                if si is not None and pbatch is not None:
+                    stem   = Path(batch["im_file"][si]).stem
+                    conf_t = predn["conf"]
+                    mask   = conf_t >= conf_thresh
+                    above_bboxes = predn["bboxes"][mask].clone()
+                    above_confs  = conf_t[mask]
+                    if len(above_bboxes):
+                        ops.scale_boxes(
+                            pbatch["imgsz"],
+                            above_bboxes[:, :4],
+                            pbatch["ori_shape"],
+                            ratio_pad=pbatch["ratio_pad"],
+                            xywh=True,
+                        )
+                        corners = np.asarray(
+                            ops.xywhr2xyxyxyxy(above_bboxes)
+                        ).astype(int)
+                        predictions[stem] = {
+                            "boxes": corners.tolist(),
+                            "confs": above_confs.cpu().numpy().tolist(),
+                        }
+                    else:
+                        predictions[stem] = {"boxes": [], "confs": []}
+                return predn
+
+            validator._prepare_batch = cap_prepare_batch
+            validator._prepare_pred  = cap_prepare_pred
+            try:
+                original_update(preds, batch)
+            finally:
+                validator._prepare_batch = orig_prepare_batch
+                validator._prepare_pred  = orig_prepare_pred
+
+            for im_file in batch["im_file"]:
+                stem = Path(im_file).stem
+                if stem not in predictions:
                     predictions[stem] = {"boxes": [], "confs": []}
-            original_update(preds, batch)
 
         validator.update_metrics = wrapped_update
         validator._pred_wrap_installed = True
