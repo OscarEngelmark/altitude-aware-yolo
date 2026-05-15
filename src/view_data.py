@@ -15,6 +15,8 @@ Usage:
     cd src && python view_data.py --run yolov9s-aas-12 --split test --show-gt
     cd src && python view_data.py --run yolov9s-aas-12 --weights epoch45.pt
 
+  Note: run predict.py first to generate the predictions JSON.
+
 Controls (raw/augmented): any key -> next | s -> save | q -> quit
   Augmented also: r -> re-augment same image
 Controls (predictions):   any key -> next | p/← -> prev | s -> save | q -> quit
@@ -472,7 +474,7 @@ def _run_viewer(
 
 def _render_prediction_frame(
     img_path: Path,
-    result: Any,
+    pred: Dict[str, Any],
     metadata: Dict[str, float],
     lbl_dir: Path,
     show_gt: bool,
@@ -489,12 +491,13 @@ def _render_prediction_frame(
         )
         draw_corners(img, gt_corners, color=(0, 255, 0))
 
-    n_pred = 0
+    boxes = pred.get("boxes", [])
+    confs_list = pred.get("confs", [])
+    n_pred = len(boxes)
     conf_str = ""
-    if result.obb is not None and len(result.obb):
-        pred_corners = result.obb.xyxyxyxy.cpu().numpy().astype(np.int32)
-        confs = result.obb.conf.cpu().numpy()
-        n_pred = len(pred_corners)
+    if n_pred:
+        pred_corners = np.array(boxes, dtype=np.int32)  # (N, 4, 2)
+        confs = np.array(confs_list)                    # (N,)
         conf_str = f"conf {confs.min():.2f}-{confs.max():.2f}"
         draw_corners(img, pred_corners, color=(0, 0, 255))
         for corners, conf in zip(pred_corners, confs):
@@ -522,7 +525,7 @@ def _render_prediction_frame(
 
 def _run_predictions_viewer(
     img_paths: List[Path],
-    all_results: List[Any],
+    predictions: Dict[str, Dict],
     metadata: Dict[str, float],
     lbl_dir: Path,
     show_gt: bool,
@@ -532,8 +535,11 @@ def _run_predictions_viewer(
     n = len(img_paths)
     idx = 0
     while True:
+        pred = predictions.get(
+            img_paths[idx].stem, {"boxes": [], "confs": []}
+        )
         frame = _render_prediction_frame(
-            img_paths[idx], all_results[idx],
+            img_paths[idx], pred,
             metadata, lbl_dir, show_gt, max_dim,
         )
         if frame is None:
@@ -594,43 +600,30 @@ def main(opt: argparse.Namespace) -> None:
     cv2.namedWindow(_WINDOW_NAME, cv2.WINDOW_NORMAL)
 
     if opt.run:
-        import os
-        import torch
-        from ultralytics import YOLO
+        from predict import pred_json_path
 
-        os.environ.setdefault(
-            "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
-        )
-        device = "0" if torch.cuda.is_available() else "cpu"
-        weights_path = g.RUNS_DIR / opt.run / "weights" / opt.weights
-        if not weights_path.exists():
-            sys.exit(f"Weights not found: {weights_path}")
+        json_path = pred_json_path(opt.run, opt.weights, opt.split)
+        if not json_path.exists():
+            sys.exit(
+                f"Predictions not found: {json_path}\n"
+                f"Run:  python predict.py --run {opt.run} "
+                f"--weights {opt.weights} --split {opt.split}"
+            )
+
+        with json_path.open() as f:
+            predictions: Dict[str, Dict] = json.load(f)
 
         metadata = load_metadata(g.OUT_DIR / "metadata.json")
         save_dir = g.RESULTS_DIR / "predictions" / opt.run
 
-        print(f"Weights:  {weights_path}")
-        print(f"Split:    {opt.split}  ({len(images)} images)")
-        print(f"Device:   {device}")
-        print("Running inference — this may take a moment...")
-
-        model = YOLO(str(weights_path))
-        all_results = model.predict(
-            source=[str(p) for p in images],
-            imgsz=opt.imgsz,
-            conf=opt.conf,
-            device=device,
-            stream=False,
-            verbose=False,
-        )
-
+        print(f"Predictions: {json_path}")
+        print(f"Split:       {opt.split}  ({len(images)} images)")
         print(
-            f"Done. Launching viewer.\n"
-            f"  any key = next  |  p/← = prev  |  s = save  |  q = quit\n"
+            "  any key = next  |  p/← = prev  |  s = save  |  q = quit\n"
             f"  Saves go to: {save_dir}"
         )
         _run_predictions_viewer(
-            images, all_results, metadata,
+            images, predictions, metadata,
             lbl_dir, opt.show_gt, opt.max_dim, save_dir,
         )
 
@@ -777,15 +770,7 @@ def parse_opt() -> argparse.Namespace:
     # Predictions-only flags
     parser.add_argument(
         "--weights", type=str, default="best.pt",
-        help="Weights filename under <run>/weights/ (default: best.pt)",
-    )
-    parser.add_argument(
-        "--conf", type=float, default=0.25,
-        help="Confidence threshold for predictions (default: 0.25)",
-    )
-    parser.add_argument(
-        "--imgsz", type=int, default=1920,
-        help="Inference image size; should match training (default: 1920)",
+        help="Weights filename used to generate predictions JSON (default: best.pt)",
     )
     parser.add_argument(
         "--show-gt", action="store_true", dest="show_gt",
