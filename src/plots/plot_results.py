@@ -37,7 +37,7 @@ import style
 
 # ── constants ──────────────────────────────────────────────────────────────
 
-EVAL_CSV = g.RESULTS_DIR / "from_remote" / "evaluations.csv"
+EVAL_CSV = g.RESULTS_DIR / "evaluations.csv"
 
 DEFAULT_BASELINE = "yolov9s-aug-4"
 DEFAULT_AAS      = "yolov9s-aas-25"
