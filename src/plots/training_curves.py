@@ -192,7 +192,6 @@ def main() -> None:
         for ax in axes[1, :]:
             ax.set_xlabel("Epoch")
 
-        fig.suptitle("Training dynamics — Baseline vs. AAS")
         plt.tight_layout()
 
         out.parent.mkdir(parents=True, exist_ok=True)
