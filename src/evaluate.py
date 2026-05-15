@@ -1,8 +1,7 @@
 """
 Evaluate a trained YOLOv9-OBB checkpoint on the test or val split.
 
-Prints overall and per-bucket metrics, then saves a 2×2 bar-chart PNG to
-results/<run-name>.png.
+Prints overall metrics and appends a row to results/evaluations.csv.
 
 Usage
 -----
@@ -22,12 +21,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 import torch
-import matplotlib.pyplot as plt
 from ultralytics import YOLO
 
 import globals as g
 from callbacks import (
-    get_last_bucket_metrics,
     register_metadata_callbacks,
     register_prediction_callback,
 )
@@ -37,14 +34,6 @@ from train import write_dataset_yaml
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 DEVICE: str = "0" if torch.cuda.is_available() else "cpu"
-
-METRICS = [
-    ("Precision",  "precision"),
-    ("Recall",     "recall"),
-    ("mAP50",      "mAP50"),
-    ("mAP50-95",   "mAP50-95"),
-]
-
 
 CSV_PATH = g.RESULTS_DIR / "evaluations.csv"
 CSV_FIELDS = ["timestamp", "run_name", "weights", "split", "precision",
@@ -78,58 +67,6 @@ def save_metrics_csv(
         })
 
 
-def plot_metrics(
-    overall: Dict[str, float],
-    bucket_metrics: Dict[str, float],
-    run_name: str,
-    split: str = "test",
-) -> Path:
-    """Save a 2x2 grid of bar charts — one per metric — to RESULTS_DIR."""
-    bucket_labels = [label for label, *_ in g.ALTITUDE_BUCKETS]
-    prefix = "val_alt"
-
-    n_cars_overall = sum(
-        int(bucket_metrics.get(f"{prefix}/{b}/n_targets", 0))
-        for b in bucket_labels
-    )
-    x_labels = [f"Overall\n({n_cars_overall} cars)"]
-    for b in bucket_labels:
-        n = int(bucket_metrics.get(f"{prefix}/{b}/n_targets", 0))
-        x_labels.append(f"{b}\n({n} cars)")
-
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    fig.suptitle(f"{split.capitalize()} metrics — {run_name}", fontsize=14)
-
-    for ax, (title, key) in zip(axes.flat, METRICS):
-        values = [overall[key]]
-        for bucket in bucket_labels:
-            v = bucket_metrics.get(f"{prefix}/{bucket}/{key}")
-            values.append(v if v is not None else 0.0)
-
-        bars = ax.bar(x_labels, values)
-        ax.set_title(title)
-        ax.set_ylim(0, 1.0)
-
-        for bar, val in zip(bars, values):
-            inside = val > 0.88
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() - 0.03 if inside else bar.get_height() + 0.02,
-                f"{val:.3f}",
-                ha="center",
-                va="top" if inside else "bottom",
-                fontsize=8,
-                color="white" if inside else "black",
-            )
-
-    fig.tight_layout()
-    g.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = g.RESULTS_DIR / f"{run_name}.png"
-    fig.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return out
-
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Evaluate a YOLOv9-OBB checkpoint on the test split"
@@ -149,8 +86,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--run-name", type=str, default=None,
-        help="name used for the output plot; only applies when a single "
-             "weights file is given (defaults to 'eval-<stem>-<run>')",
+        help="name for the ultralytics val run directory; only applies when "
+             "a single weights file is given (defaults to 'eval-<stem>-<run>')",
     )
     p.add_argument(
         "--imgsz", type=int, default=1920,
@@ -224,8 +161,6 @@ def evaluate_checkpoint(
     print(f"{s} mAP50-95:   {overall['mAP50-95']:.4f}")
     print(f"{s} precision:  {overall['precision']:.4f}")
     print(f"{s} recall:     {overall['recall']:.4f}")
-    out = plot_metrics(overall, get_last_bucket_metrics(), run_name, split)
-    print(f"Plot saved to:  {out}")
     save_metrics_csv(weights_path, overall, split)
     print(f"Metrics saved to: {CSV_PATH}")
 
