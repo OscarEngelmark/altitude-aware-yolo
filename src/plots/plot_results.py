@@ -29,6 +29,7 @@ import argparse
 from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import numpy as np
 import pandas as pd
 
@@ -130,7 +131,7 @@ def _epoch_idx(epochs: np.ndarray, epoch: int) -> int:
 # ── training curve helpers ─────────────────────────────────────────────────
 
 def _plot_loss(
-    ax: plt.Axes,
+    ax: Axes,
     runs: List[RunData],
     train_col: str,
     val_col: str,
@@ -162,7 +163,7 @@ def _plot_loss(
 
 
 def _plot_metric(
-    ax: plt.Axes,
+    ax: Axes,
     runs: List[RunData],
     metric_col: str,
     title: str,
