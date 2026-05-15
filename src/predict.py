@@ -40,19 +40,19 @@ def run_predict(
     workers: int,
 ) -> Dict[str, Dict]:
     model = YOLO(str(weights_path))
-    all_results = model.predict(
+    result_stream = model.predict(
         source=[str(p) for p in images],
         imgsz=imgsz,
         conf=conf,
         batch=batch,
         workers=workers,
         device=DEVICE,
-        stream=False,
+        stream=True,
         verbose=False,
     )
 
     predictions: Dict[str, Dict] = {}
-    for img_path, result in zip(images, all_results):
+    for img_path, result in zip(images, result_stream):
         if result.obb is not None and len(result.obb):
             boxes = np.asarray(result.obb.xyxyxyxy).astype(int).tolist()
             confs = np.asarray(result.obb.conf).tolist()
