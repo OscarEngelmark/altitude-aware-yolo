@@ -15,17 +15,22 @@ python src/evaluate.py --run test-run --weights best.pt --run-name my-eval
 
 import argparse
 import csv
+import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 import matplotlib.pyplot as plt
 from ultralytics import YOLO
 
 import globals as g
-from callbacks import get_last_bucket_metrics, register_metadata_callbacks
+from callbacks import (
+    get_last_bucket_metrics,
+    register_metadata_callbacks,
+    register_prediction_callback,
+)
 from train import write_dataset_yaml
 
 # Set PyTorch CUDA allocator to allow fragmentation (prevents GPU OOM errors)
@@ -44,6 +49,10 @@ METRICS = [
 CSV_PATH = g.RESULTS_DIR / "evaluations.csv"
 CSV_FIELDS = ["timestamp", "run_name", "weights", "split", "precision",
               "recall", "mAP50", "mAP50-95"]
+
+
+def pred_json_path(run: str, weights: str, split: str) -> Path:
+    return g.RESULTS_DIR / "predictions" / f"{run}_{Path(weights).stem}_{split}.json"
 
 
 def save_metrics_csv(
@@ -157,6 +166,15 @@ def parse_args() -> argparse.Namespace:
         "--split", type=str, default="test", choices=["test", "val"],
         help="dataset split to evaluate on (default: test)",
     )
+    p.add_argument(
+        "--save-predictions", action="store_true", dest="save_predictions",
+        help="also save per-image predicted boxes to a JSON file for view_data.py",
+    )
+    p.add_argument(
+        "--pred-conf", type=float, default=0.25, dest="pred_conf",
+        help="confidence threshold for saved predictions (default: 0.25); "
+             "does not affect mAP computation",
+    )
     return p.parse_args()
 
 
@@ -168,6 +186,8 @@ def evaluate_checkpoint(
     imgsz: int,
     batch: int,
     workers: int,
+    save_predictions: bool = False,
+    pred_conf: float = 0.25,
 ) -> None:
     print(f"\n{'='*60}")
     print(f"Weights:  {weights_path}")
@@ -175,6 +195,10 @@ def evaluate_checkpoint(
 
     model = YOLO(str(weights_path))
     register_metadata_callbacks(model, training=False)
+
+    predictions: Dict[str, Any] = {}
+    if save_predictions:
+        register_prediction_callback(model, predictions, pred_conf)
 
     results = model.val(
         data=dataset_yaml,
@@ -204,6 +228,13 @@ def evaluate_checkpoint(
     print(f"Plot saved to:  {out}")
     save_metrics_csv(weights_path, overall, split)
     print(f"Metrics saved to: {CSV_PATH}")
+
+    if save_predictions:
+        run_dir = weights_path.parent.parent.name
+        json_path = pred_json_path(run_dir, weights_path.name, split)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json.dumps(predictions, indent=2))
+        print(f"Predictions saved to: {json_path}")
 
 
 def main() -> None:
@@ -237,6 +268,8 @@ def main() -> None:
         evaluate_checkpoint(
             weights_path, run_name, dataset_yaml,
             args.split, args.imgsz, args.batch, args.workers,
+            save_predictions=args.save_predictions,
+            pred_conf=args.pred_conf,
         )
 
 

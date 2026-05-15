@@ -600,9 +600,10 @@ def main(opt: argparse.Namespace) -> None:
     cv2.namedWindow(_WINDOW_NAME, cv2.WINDOW_NORMAL)
 
     if opt.run:
-        from predict import pred_json_path
-
-        json_path = pred_json_path(opt.run, opt.weights, opt.split)
+        json_path = (
+            g.RESULTS_DIR / "predictions"
+            / f"{opt.run}_{Path(opt.weights).stem}_{opt.split}.json"
+        )
         if not json_path.exists():
             sys.exit(
                 f"Predictions not found: {json_path}\n"

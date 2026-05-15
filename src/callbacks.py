@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import wandb
+from ultralytics.utils import ops
 
 import globals as g
 
@@ -328,6 +329,46 @@ def _on_fit_epoch_end(trainer) -> None:
 def get_last_bucket_metrics() -> Dict[str, float]:
     """Return the bucket metrics dict from the most recent validation pass."""
     return dict(_last_bucket_metrics)
+
+
+def register_prediction_callback(
+    model: Any,
+    predictions: Dict[str, Any],
+    conf_thresh: float,
+) -> None:
+    """Wrap validator.update_metrics to capture per-image boxes and confs.
+
+    The val pipeline runs at conf=0.001 so the full P-R curve is preserved
+    for mAP; conf_thresh filters what gets written to the predictions dict
+    without affecting metric computation.
+    """
+    def on_val_start(validator: Any) -> None:
+        if getattr(validator, "_pred_wrap_installed", False):
+            return
+        original_update = validator.update_metrics
+
+        def wrapped_update(preds: Any, batch: Any) -> None:
+            for si, pred in enumerate(preds):
+                stem = Path(batch["im_file"][si]).stem
+                above = pred[pred[:, 5] >= conf_thresh] if len(pred) else pred
+                if len(above):
+                    pbatch = validator._prepare_batch(si, batch)
+                    predn = validator._prepare_pred(above, pbatch)
+                    corners = np.asarray(
+                        ops.xywhr2xyxyxyxy(predn[:, :5])
+                    ).astype(int)
+                    predictions[stem] = {
+                        "boxes": corners.tolist(),
+                        "confs": np.asarray(predn[:, 5]).tolist(),
+                    }
+                else:
+                    predictions[stem] = {"boxes": [], "confs": []}
+            original_update(preds, batch)
+
+        validator.update_metrics = wrapped_update
+        validator._pred_wrap_installed = True
+
+    model.add_callback("on_val_start", on_val_start)
 
 
 def register_metadata_callbacks(model: Any, training: bool = True) -> None:
