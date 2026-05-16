@@ -127,7 +127,7 @@ def plot_panels(
         ax.set_title(title)
         ax.set_ylabel("Frame count")
         ax.legend()
-    axes[-1].set_xlabel("Effective altitude (m)")
+    axes[-1].set_xlabel("Apparent altitude (m)")
 
     y_max = max(ax.get_ylim()[1] for ax in axes)
     for ax in axes:
@@ -219,7 +219,7 @@ def main() -> None:
         axes[n_panels - 1, 0].tick_params(labelbottom=True)
         for ax in axes[n_panels:, 0]:
             ax.set_visible(False)
-        fig.suptitle(f"Effective altitude distributions — {args.split} split")
+        fig.suptitle(f"Apparent altitude distributions — {args.split} split")
         plt.tight_layout()
 
         out.parent.mkdir(parents=True, exist_ok=True)
