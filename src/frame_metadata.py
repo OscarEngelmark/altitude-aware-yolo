@@ -14,7 +14,7 @@ Provides two public entry points:
 
 Extension points
 ----------------
-- To swap in a different altitude algorithm, replace estimate_altitudes_ransac().
+- To swap in a different altitude algorithm, replace estimate_altitudes().
 - To add new per-frame signals (tilt, pitch, GSD, …), extend
   compute_frame_metadata() — its return dict is spread directly into each
   frame's metadata.json entry, so new keys appear automatically.
@@ -97,63 +97,28 @@ def compute_frame_diagonals(
 def estimate_altitudes(
     frame_diagonals: Dict[int, float], h_max: float
 ) -> Tuple[Dict[int, float], np.ndarray, np.ndarray, np.ndarray]:
-    """Per-frame altitude estimate (metres) using np.polyfit on 1/l.
+    """Per-frame altitude estimate (metres) using RANSAC on 1/l.
 
     H ∝ 1/l (perspective geometry: boxes appear smaller at greater altitude).
-    Fits a 4th-degree polynomial to (frame_id, 1/l) across all annotated
-    frames on a normalised time axis [0, 1]. The polynomial maximum
-    corresponds to H_max. Per-frame altitude uses the raw 1/l values anchored
-    to poly_max rather than the smoothed curve.
+    Fits a degree-4 polynomial with RANSACRegressor; uses the smoothed
+    predictions as per-frame altitudes. Falls back to plain np.polyfit when
+    fewer than 20 frames are available (RANSAC min_samples requirement).
 
     Returns
     -------
-    altitudes   : {frame_id: altitude_m}
-    frames      : sorted frame indices (1-D array)
-    t           : normalised time axis in [0, 1] for each frame
-    coeffs      : polynomial coefficients (degree-4, fit to 1/l values)
+    altitudes        : {frame_id: altitude_m}
+    frames           : sorted frame indices (1-D array)
+    dense_frames     : 1000-point frame indices for plotting
+    dense_inv_diags  : predicted 1/l at dense_frames (from the fit)
     """
     if not frame_diagonals:
         return {}, np.array([]), np.array([]), np.array([])
 
-    frames     = np.array(sorted(frame_diagonals.keys()), dtype=float)
-    diags      = np.array([frame_diagonals[int(f)] for f in frames])
-    inv_diags  = 1.0 / diags
-
-    span = max(frames.max() - frames.min(), 1.0)
-    t    = (frames - frames.min()) / span
-
-    if len(frames) >= 5:
-        coeffs   = np.polyfit(t, inv_diags, deg=4)
-        t_dense  = np.linspace(0.0, 1.0, 1000)
-        poly_max = float(np.polyval(coeffs, t_dense).max())
-    else:
-        coeffs   = np.array([])
-        poly_max = float(inv_diags.max())
-
-    altitudes = {
-        int(f): float(h_max * inv_d / poly_max)
-        for f, inv_d in zip(frames, inv_diags)
-    }
-    return altitudes, frames, t, coeffs
-
-
-def estimate_altitudes_ransac(
-    frame_diagonals: Dict[int, float], h_max: float
-) -> Dict[int, float]:
-    """Per-frame altitude estimate using the authors' RANSAC method.
-
-    Same physical model as estimate_altitudes() (H ∝ 1/l), but fits the
-    degree-4 polynomial with RANSACRegressor for outlier robustness and uses
-    the smoothed polynomial predictions as per-frame altitudes rather than raw
-    1/l values. Falls back to the plain np.polyfit path when there are fewer
-    than 20 frames (RANSAC min_samples requirement).
-    """
-    if not frame_diagonals:
-        return {}
-
     frames    = np.array(sorted(frame_diagonals.keys()), dtype=float)
     diags     = np.array([frame_diagonals[int(f)] for f in frames])
     inv_diags = 1.0 / diags
+
+    dense_frames = np.linspace(frames.min(), frames.max(), 1000)
 
     if len(frames) >= 20:
         ransac = RANSACRegressor(
@@ -163,28 +128,29 @@ def estimate_altitudes_ransac(
             min_samples=20,
         )
         ransac.fit(frames[:, np.newaxis], inv_diags)
-        line_x   = np.linspace(frames.min(), frames.max(), 1000)
-        poly_max = float(ransac.predict(line_x[:, np.newaxis]).max())
-        smoothed = ransac.predict(frames[:, np.newaxis])
+        dense_inv_diags = ransac.predict(dense_frames[:, np.newaxis])
+        poly_max        = float(dense_inv_diags.max())
+        smoothed        = ransac.predict(frames[:, np.newaxis])
     else:
-        # Fewer than 20 frames: RANSAC min_samples cannot be satisfied; fall
-        # back to the plain polyfit path.
-        span = max(frames.max() - frames.min(), 1.0)
-        t    = (frames - frames.min()) / span
+        span    = max(frames.max() - frames.min(), 1.0)
+        t       = (frames - frames.min()) / span
+        t_dense = (dense_frames - frames.min()) / span
         if len(frames) >= 5:
-            coeffs   = np.polyfit(t, inv_diags, deg=4)
-            t_dense  = np.linspace(0.0, 1.0, 1000)
-            poly_max = float(np.polyval(coeffs, t_dense).max())
-            smoothed = np.polyval(coeffs, t)
+            coeffs          = np.polyfit(t, inv_diags, deg=4)
+            dense_inv_diags = np.polyval(coeffs, t_dense)
+            poly_max        = float(dense_inv_diags.max())
+            smoothed        = np.polyval(coeffs, t)
         else:
-            poly_max = float(inv_diags.max())
-            smoothed = inv_diags
+            dense_inv_diags = np.array([])
+            poly_max        = float(inv_diags.max())
+            smoothed        = inv_diags
 
     height_scale = h_max / poly_max
-    return {
+    altitudes = {
         int(f): float(s * height_scale)
         for f, s in zip(frames, smoothed)
     }
+    return altitudes, frames, dense_frames, dense_inv_diags
 
 
 def compute_frame_metadata(
@@ -206,7 +172,7 @@ def compute_frame_metadata(
     video_meta   : entry from load_video_csv() for this video
     """
     diagonals = compute_frame_diagonals(annotations, img_w, img_h)
-    altitudes = estimate_altitudes_ransac(diagonals, video_meta["h_max"])
+    altitudes, *_ = estimate_altitudes(diagonals, video_meta["h_max"])
     return {
         frame_id: {
             "mean_diag_px": diagonals.get(frame_id),

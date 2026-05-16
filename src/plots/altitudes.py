@@ -92,43 +92,40 @@ def main() -> None:
         h_max        = vmeta.get("h_max")
         altitude_str = vmeta.get("altitude_str", "")
 
-        # Refit polynomial (new algorithm) from stored diagonals
+        # Refit RANSAC from stored diagonals to get the dense curve
         frame_diagonals = {
             int(e["frame_id"]): e["mean_diag_px"] for e in frames_sorted
         }
-        _, _, _, coeffs = estimate_altitudes(
+        _, _, dense_frames, dense_inv_diags = estimate_altitudes(
             frame_diagonals, h_max or 1.0
         )
 
-        span    = max(frame_ids.max() - frame_ids.min(), 1.0)
-        t_dense = np.linspace(0.0, 1.0, 1000)
-        f_dense = frame_ids.min() + t_dense * span
-
-        # ── top: diagonal scatter + polynomial back-projected to px ─────────
+        # ── top: diagonal scatter + RANSAC fit back-projected to px ─────────
         ax_top = axes[0, col]
         ax_top.scatter(frame_ids, diags, s=12, alpha=0.6, label="raw diagonal")
-        if coeffs.size > 0:
-            inv_poly = np.polyval(coeffs, t_dense)
+        if dense_inv_diags.size > 0:
             with np.errstate(divide="ignore", invalid="ignore"):
-                diag_poly = np.where(inv_poly > 0, 1.0 / inv_poly, np.nan)
+                diag_curve = np.where(
+                    dense_inv_diags > 0, 1.0 / dense_inv_diags, np.nan
+                )
             ax_top.plot(
-                f_dense, diag_poly, "r-", lw=1.5,
-                label="poly fit (1/l → px)",
+                dense_frames, diag_curve, "r-", lw=1.5,
+                label="RANSAC fit (1/l → px)",
             )
         ax_top.set_title(video_stem.replace("_", " "))
         ax_top.set_xlabel("frame index")
         ax_top.set_ylabel("mean diagonal (px)")
         ax_top.legend()
 
-        # ── bottom: altitude scatter + polynomial in altitude space ─────────
+        # ── bottom: altitude scatter + RANSAC fit in altitude space ─────────
         ax_bot = axes[1, col]
         ax_bot.scatter(frame_ids, alts, s=12, alpha=0.6, label="est. altitude")
 
-        if coeffs.size > 0 and h_max is not None:
-            inv_poly = np.polyval(coeffs, t_dense)
-            poly_max = float(inv_poly.max())
-            alt_poly = h_max * inv_poly / poly_max
-            ax_bot.plot(f_dense, alt_poly, "r-", lw=1.5, label="poly fit")
+        if dense_inv_diags.size > 0 and h_max is not None:
+            alt_curve = h_max * dense_inv_diags / float(dense_inv_diags.max())
+            ax_bot.plot(
+                dense_frames, alt_curve, "r-", lw=1.5, label="RANSAC fit"
+            )
 
         if h_max is not None:
             ax_bot.axhline(h_max, color="red", ls="--", lw=1,
