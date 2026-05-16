@@ -30,7 +30,7 @@ import numpy as np
 
 import globals as g
 import style
-from frame_metadata import load_video_csv, estimate_altitudes_with_fit
+from frame_metadata import load_video_csv, estimate_altitudes
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,7 +96,7 @@ def main() -> None:
         frame_diagonals = {
             int(e["frame_id"]): e["mean_diag_px"] for e in frames_sorted
         }
-        _, _, _, coeffs = estimate_altitudes_with_fit(
+        _, _, _, coeffs = estimate_altitudes(
             frame_diagonals, h_max or 1.0
         )
 

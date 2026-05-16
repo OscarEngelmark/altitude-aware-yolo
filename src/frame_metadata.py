@@ -14,7 +14,7 @@ Provides two public entry points:
 
 Extension points
 ----------------
-- To swap in a different altitude algorithm, replace estimate_altitudes().
+- To swap in a different altitude algorithm, replace estimate_altitudes_ransac().
 - To add new per-frame signals (tilt, pitch, GSD, …), extend
   compute_frame_metadata() — its return dict is spread directly into each
   frame's metadata.json entry, so new keys appear automatically.
@@ -96,49 +96,14 @@ def compute_frame_diagonals(
 
 def estimate_altitudes(
     frame_diagonals: Dict[int, float], h_max: float
-) -> Dict[int, float]:
-    """Per-frame altitude estimate (metres) using the paper's method.
+) -> Tuple[Dict[int, float], np.ndarray, np.ndarray, np.ndarray]:
+    """Per-frame altitude estimate (metres) using np.polyfit on 1/l.
 
     H ∝ 1/l (perspective geometry: boxes appear smaller at greater altitude).
     Fits a 4th-degree polynomial to (frame_id, 1/l) across all annotated
-    frames. The polynomial maximum corresponds to the frame where the drone
-    is highest (H_max). Per-frame altitude is then:
-
-        H_frame = H_max · (1/l_frame) / poly_max
-
-    The time axis is normalised to [0, 1] for numerical stability.
-
-    Also returns the fitted polynomial coefficients and frame time axis for
-    use in diagnostic plots — see estimate_altitudes_with_fit().
-    """
-    if not frame_diagonals:
-        return {}
-
-    frames     = np.array(sorted(frame_diagonals.keys()), dtype=float)
-    diags      = np.array([frame_diagonals[int(f)] for f in frames])
-    inv_diags  = 1.0 / diags
-
-    span = max(frames.max() - frames.min(), 1.0)
-    t    = (frames - frames.min()) / span
-
-    if len(frames) >= 5:
-        coeffs   = np.polyfit(t, inv_diags, deg=4)
-        t_dense  = np.linspace(0.0, 1.0, 1000)
-        poly_max = float(np.polyval(coeffs, t_dense).max())
-    else:
-        poly_max = float(inv_diags.max())
-
-    return {
-        int(f): float(h_max * inv_d / poly_max)
-        for f, inv_d in zip(frames, inv_diags)
-    }
-
-
-def estimate_altitudes_with_fit(
-    frame_diagonals: Dict[int, float], h_max: float
-) -> Tuple[Dict[int, float], np.ndarray, np.ndarray, np.ndarray]:
-    """Same as estimate_altitudes but also returns the polynomial fit for 
-    plots.
+    frames on a normalised time axis [0, 1]. The polynomial maximum
+    corresponds to H_max. Per-frame altitude uses the raw 1/l values anchored
+    to poly_max rather than the smoothed curve.
 
     Returns
     -------
@@ -177,13 +142,11 @@ def estimate_altitudes_ransac(
 ) -> Dict[int, float]:
     """Per-frame altitude estimate using the authors' RANSAC method.
 
-    Identical physical model to estimate_altitudes() (H ∝ 1/l), but fits the
-    degree-4 polynomial with RANSACRegressor for outlier robustness, and uses
+    Same physical model as estimate_altitudes() (H ∝ 1/l), but fits the
+    degree-4 polynomial with RANSACRegressor for outlier robustness and uses
     the smoothed polynomial predictions as per-frame altitudes rather than raw
-    1/l values.  Falls back to the plain np.polyfit path when there are fewer
+    1/l values. Falls back to the plain np.polyfit path when there are fewer
     than 20 frames (RANSAC min_samples requirement).
-
-    Parameters match estimate_altitudes(); return type is identical.
     """
     if not frame_diagonals:
         return {}
@@ -205,7 +168,7 @@ def estimate_altitudes_ransac(
         smoothed = ransac.predict(frames[:, np.newaxis])
     else:
         # Fewer than 20 frames: RANSAC min_samples cannot be satisfied; fall
-        # back to the plain polyfit path used by estimate_altitudes().
+        # back to the plain polyfit path.
         span = max(frames.max() - frames.min(), 1.0)
         t    = (frames - frames.min()) / span
         if len(frames) >= 5:
