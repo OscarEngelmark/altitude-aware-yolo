@@ -207,7 +207,8 @@ marimo/_lsp/
 __marimo__/
 
 # Large datasets and archives
-data/
+data/*
+!data/video_data.csv
 *.tar.gz
 *.zip
 
