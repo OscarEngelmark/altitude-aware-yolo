@@ -100,9 +100,10 @@ def estimate_altitudes(
     """Per-frame altitude estimate (metres) using RANSAC on 1/l.
 
     H ∝ 1/l (perspective geometry: boxes appear smaller at greater altitude).
-    Fits a degree-4 polynomial with RANSACRegressor; uses the smoothed
-    predictions as per-frame altitudes. Falls back to plain np.polyfit when
-    fewer than 20 frames are available (RANSAC min_samples requirement).
+    Fits a degree-4 polynomial with RANSACRegressor to find the calibration
+    peak (poly_max ↔ H_max). Per-frame altitude is then the raw 1/l value
+    anchored to that peak: H = H_max · (1/l) / poly_max. Falls back to plain
+    np.polyfit when fewer than 20 frames are available.
 
     Returns
     -------
@@ -130,7 +131,6 @@ def estimate_altitudes(
         ransac.fit(frames[:, np.newaxis], inv_diags)
         dense_inv_diags = ransac.predict(dense_frames[:, np.newaxis])
         poly_max        = float(dense_inv_diags.max())
-        smoothed        = ransac.predict(frames[:, np.newaxis])
     else:
         span    = max(frames.max() - frames.min(), 1.0)
         t       = (frames - frames.min()) / span
@@ -139,16 +139,14 @@ def estimate_altitudes(
             coeffs          = np.polyfit(t, inv_diags, deg=4)
             dense_inv_diags = np.polyval(coeffs, t_dense)
             poly_max        = float(dense_inv_diags.max())
-            smoothed        = np.polyval(coeffs, t)
         else:
             dense_inv_diags = np.array([])
             poly_max        = float(inv_diags.max())
-            smoothed        = inv_diags
 
     height_scale = h_max / poly_max
     altitudes = {
-        int(f): float(s * height_scale)
-        for f, s in zip(frames, smoothed)
+        int(f): float(inv_d * height_scale)
+        for f, inv_d in zip(frames, inv_diags)
     }
     return altitudes, frames, dense_frames, dense_inv_diags
 
