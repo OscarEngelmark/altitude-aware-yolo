@@ -148,6 +148,15 @@ def main() -> None:
         args.out = g.RESULTS_DIR / f"size_vs_altitude.{fmt}"
     if args.style:
         style.apply_style(args.style)
+        if args.style == style.REPORT:
+            plt.rcParams.update({
+                "font.size": 11,
+                "axes.titlesize": 12,
+                "axes.labelsize": 11,
+                "legend.fontsize": 9,
+                "xtick.labelsize": 10,
+                "ytick.labelsize": 10,
+            })
     print(f"Loading data from splits: {args.splits} …")
     altitudes, short_sides = load_data(args.splits)
     print(f"  {len(altitudes):,} boxes with altitude loaded.")
@@ -197,8 +206,8 @@ def main() -> None:
         ax.axvline(H_crit, lw=0.9, color=col, ls=":", alpha=0.6)
         ax.text(
             H_crit, 0.99, f" {H_crit:.0f} m",
-            color=col, fontsize=7, va="top",
-            transform=ax.get_xaxis_transform(),
+            color=col, fontsize=plt.rcParams.get("xtick.labelsize", 8),
+            va="top", transform=ax.get_xaxis_transform(),
         )
 
     ax.set_xlabel("flight altitude (m)")

@@ -9,12 +9,12 @@ STYLES: List[str] = [REPORT, PPT]
 
 _RC: Dict[str, Dict[str, Any]] = {
     REPORT: {
-        "font.size": 8,
-        "axes.titlesize": 9,
-        "axes.labelsize": 8,
-        "legend.fontsize": 7,
-        "xtick.labelsize": 7,
-        "ytick.labelsize": 7,
+        "font.size": 9,
+        "axes.titlesize": 10,
+        "axes.labelsize": 9,
+        "legend.fontsize": 8,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
         "lines.linewidth": 1.2,
     },
     PPT: {

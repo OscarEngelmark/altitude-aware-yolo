@@ -199,7 +199,9 @@ def main() -> None:
         )
         style.apply_style(s)
 
-        PPT_WIDTH = 13.0
+        PPT_WIDTH    = 13.0
+        REPORT_WIDTH =  3.3  # single IEEE column ≈ 3.5 in; generate slightly
+                             # narrower so LaTeX scales fonts up, not down
         fs = style.figsize(s, n_rows=3)
         if s == style.PPT:
             font_scale = PPT_WIDTH / style.figsize(s)[0]
@@ -211,6 +213,16 @@ def main() -> None:
                 )
             })
             fs = (PPT_WIDTH, fs[1])
+        elif s == style.REPORT:
+            plt.rcParams.update({
+                "font.size": 7,
+                "axes.titlesize": 7,
+                "axes.labelsize": 7,
+                "legend.fontsize": 6,
+                "xtick.labelsize": 6,
+                "ytick.labelsize": 6,
+            })
+            fs = (REPORT_WIDTH, 1.6 * 3)
         fig, axes = plt.subplots(3, 1, figsize=fs, sharex=True, squeeze=False)
         plot_panels(
             rows[:n_panels], list(axes[:n_panels, 0]),

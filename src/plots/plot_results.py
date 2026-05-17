@@ -44,7 +44,7 @@ DEFAULT_BASELINE = "yolov9s-aug-4"
 DEFAULT_AAS      = "yolov9s-aas-25"
 
 RAW_ALPHA   = 0.20
-MARKER_SIZE = 120
+MARKER_SIZE = 60
 
 PALETTE: List[str] = [
     "#4C72B0",
@@ -54,8 +54,9 @@ PALETTE: List[str] = [
     "#C44E52",
 ]
 
-PPT_FIGSIZE_CURVES = (13.0, 6.5)
-PPT_FIGSIZE_BAR    = (9.0, 5.0)
+PPT_FIGSIZE_CURVES    = (13.0, 6.5)
+REPORT_FIGSIZE_CURVES = (3.3,  6.0)  # 4×1 single IEEE column
+PPT_FIGSIZE_BAR       = (9.0,  5.0)
 
 BAR_METRICS: List[Tuple[str, str]] = [
     ("precision", "Precision"),
@@ -212,20 +213,29 @@ def _generate_training_curves(
         out = g.RESULTS_DIR / f"training_curves_{s}.{fmt}"
         style.apply_style(s)
 
-        fs = (
-            PPT_FIGSIZE_CURVES if s == style.PPT
-            else style.figsize(s, n_rows=2, n_cols=2)
-        )
-        fig, axes = plt.subplots(2, 2, figsize=fs)
-
-        for col, (train_col, val_col, title) in enumerate(loss_cols):
-            _plot_loss(axes[0, col], runs, train_col, val_col, title, smooth)
-
-        for col, (metric_col, title, ylabel) in enumerate(metric_cols):
-            _plot_metric(axes[1, col], runs, metric_col, title, ylabel, smooth)
-
-        for ax in axes[1, :]:
-            ax.set_xlabel("Epoch")
+        if s == style.PPT:
+            fig, axes = plt.subplots(2, 2, figsize=PPT_FIGSIZE_CURVES)
+            for col, (train_col, val_col, title) in enumerate(loss_cols):
+                _plot_loss(axes[0, col], runs, train_col, val_col, title, smooth)
+            for col, (metric_col, title, ylabel) in enumerate(metric_cols):
+                _plot_metric(axes[1, col], runs, metric_col, title, ylabel, smooth)
+            for ax in axes[1, :]:
+                ax.set_xlabel("Epoch")
+        else:
+            plt.rcParams.update({
+                "font.size": 7,
+                "axes.titlesize": 7,
+                "axes.labelsize": 7,
+                "legend.fontsize": 6,
+                "xtick.labelsize": 6,
+                "ytick.labelsize": 6,
+            })
+            fig, axs = plt.subplots(4, 1, figsize=REPORT_FIGSIZE_CURVES, sharex=True)
+            for i, (train_col, val_col, title) in enumerate(loss_cols):
+                _plot_loss(axs[i], runs, train_col, val_col, title, smooth)
+            for i, (metric_col, title, ylabel) in enumerate(metric_cols):
+                _plot_metric(axs[2 + i], runs, metric_col, title, ylabel, smooth)
+            axs[-1].set_xlabel("Epoch")
 
         plt.tight_layout()
         out.parent.mkdir(parents=True, exist_ok=True)
