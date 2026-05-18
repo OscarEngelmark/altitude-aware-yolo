@@ -194,7 +194,7 @@ def main() -> None:
     ax.plot(
         h_range, C / h_range,
         lw=2.0, color="black", ls="--",
-        label=f"$C/H$ fit  ($C = {C:.0f}$ px·m)",
+        label=f"$C/h$ fit  ($C = {C:.0f}$ px·m)",
     )
 
     # FPN stride thresholds
@@ -202,7 +202,7 @@ def main() -> None:
     for stride, col in zip(FPN_STRIDES, stride_colors):
         H_crit = C / stride
         ax.axhline(stride, lw=1.1, color=col, ls=":",
-                   label=f"stride {stride} px  →  H_crit ≈ {H_crit:.0f} m")
+                   label=f"stride {stride} px  →  $h_{{\\mathrm{{crit}}}}$ ≈ {H_crit:.0f} m")
         ax.axvline(H_crit, lw=0.9, color=col, ls=":", alpha=0.6)
         ax.text(
             H_crit, 0.99, f" {H_crit:.0f} m",
