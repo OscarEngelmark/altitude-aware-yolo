@@ -1,4 +1,4 @@
-# D7047E Project — YOLOv9 OBB Car Detection in Aerial Drone Footage
+# Altitude-Aware Scaling for Car Detection on the Nordic Vehicle Dataset
 
 Course project for D7047E. Trains a YOLOv9 Oriented Bounding Box (OBB) model to detect
 cars in aerial drone footage captured at 120–250 m altitude under Nordic winter conditions.
