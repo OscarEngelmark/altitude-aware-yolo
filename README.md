@@ -78,9 +78,9 @@ Raw data lives in `data/`:
 | `data/video_data.csv` | Per-video metadata: flight altitude, snow cover, cloud cover, resolution, FPS |
 | `data/processed/` | Output of `preprocess.py` — gitignored |
 
+The full dataset is available at [nvd.ltu-ai.dev](https://nvd.ltu-ai.dev/).
 `video_data.csv` is the only tracked file in `data/`; it is sourced from the
 [Nordic Vehicle Dataset repository](https://github.com/amrdev-pixel/Nordic-Vehicle-Dataset).
-The full dataset is available at [nvd.ltu-ai.dev](https://nvd.ltu-ai.dev/).
 It is the source of truth for altitude ranges. Only rows with `Annotated=TRUE` are used.
 Split assignment (train/val/test) is hardcoded in `src/preprocess.py` (`SPLIT_MAP`).
 
