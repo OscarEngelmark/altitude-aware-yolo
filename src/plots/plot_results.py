@@ -43,8 +43,9 @@ EVAL_CSV = g.RESULTS_DIR / "evaluations.csv"
 DEFAULT_BASELINE = "yolov9s-aug-4"
 DEFAULT_AAS      = "yolov9s-aas-25"
 
-RAW_ALPHA   = 0.20
-MARKER_SIZE = 60
+RAW_ALPHA            = 0.20
+MARKER_SIZE_PPT      = 180
+MARKER_SIZE_REPORT   = 60
 
 PALETTE: List[str] = [
     "#4C72B0",
@@ -120,7 +121,7 @@ def _parse_epoch(weights: str, df: pd.DataFrame) -> Optional[int]:
         return int(df["epoch"].iloc[fitness.argmax()])
     m = re.match(r"epoch(\d+)", stem)
     if m:
-        return int(m.group(1))
+        return int(m.group(1)) + 1  # checkpoints are 0-indexed; results.csv is 1-indexed
     return None
 
 
@@ -138,6 +139,7 @@ def _plot_loss(
     val_col: str,
     title: str,
     window: int,
+    marker_size: int,
 ) -> None:
     for df, label, color, marker_epoch in runs:
         epochs    = df["epoch"].to_numpy()
@@ -155,7 +157,7 @@ def _plot_loss(
             idx = _epoch_idx(epochs, marker_epoch)
             ax.scatter(
                 [epochs[idx]], [raw_val[idx]],
-                marker="*", s=MARKER_SIZE, color=color, zorder=6,
+                marker="*", s=marker_size, color=color, zorder=6,
             )
 
     ax.set_title(title)
@@ -170,6 +172,7 @@ def _plot_metric(
     title: str,
     ylabel: str,
     window: int,
+    marker_size: int,
 ) -> None:
     for df, label, color, marker_epoch in runs:
         epochs = df["epoch"].to_numpy()
@@ -183,7 +186,7 @@ def _plot_metric(
             idx = _epoch_idx(epochs, marker_epoch)
             ax.scatter(
                 [epochs[idx]], [raw[idx]],
-                marker="*", s=MARKER_SIZE, color=color, zorder=6,
+                marker="*", s=marker_size, color=color, zorder=6,
             )
 
     ax.set_title(title)
@@ -214,14 +217,16 @@ def _generate_training_curves(
         style.apply_style(s)
 
         if s == style.PPT:
+            ms = MARKER_SIZE_PPT
             fig, axes = plt.subplots(2, 2, figsize=PPT_FIGSIZE_CURVES)
             for col, (train_col, val_col, title) in enumerate(loss_cols):
-                _plot_loss(axes[0, col], runs, train_col, val_col, title, smooth)
+                _plot_loss(axes[0, col], runs, train_col, val_col, title, smooth, ms)
             for col, (metric_col, title, ylabel) in enumerate(metric_cols):
-                _plot_metric(axes[1, col], runs, metric_col, title, ylabel, smooth)
+                _plot_metric(axes[1, col], runs, metric_col, title, ylabel, smooth, ms)
             for ax in axes[1, :]:
                 ax.set_xlabel("Epoch")
         else:
+            ms = MARKER_SIZE_REPORT
             plt.rcParams.update({
                 "font.size": 7,
                 "axes.titlesize": 7,
@@ -232,9 +237,9 @@ def _generate_training_curves(
             })
             fig, axs = plt.subplots(4, 1, figsize=REPORT_FIGSIZE_CURVES, sharex=True)
             for i, (train_col, val_col, title) in enumerate(loss_cols):
-                _plot_loss(axs[i], runs, train_col, val_col, title, smooth)
+                _plot_loss(axs[i], runs, train_col, val_col, title, smooth, ms)
             for i, (metric_col, title, ylabel) in enumerate(metric_cols):
-                _plot_metric(axs[2 + i], runs, metric_col, title, ylabel, smooth)
+                _plot_metric(axs[2 + i], runs, metric_col, title, ylabel, smooth, ms)
             axs[-1].set_xlabel("Epoch")
 
         plt.tight_layout()
