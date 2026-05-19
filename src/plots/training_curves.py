@@ -1,22 +1,16 @@
-"""Results plots: training curves + metrics bar chart.
+"""Training-curve plots for one or more runs.
 
-Generates up to two figures per style:
-  training_curves_{style}.{ext}  — 2×2 training curve comparison
-  metrics_bar_{style}.{ext}      — grouped bar chart (only when --weights given)
+Generates:
+  training_curves_{style}.{ext}  — 2×2 (ppt) or 4×1 (report) panel figure
 
-The same (run, weights, label) triples drive both figures: weights determine
-the star marker position on the curves and which evaluation row to pull for
-the bar chart.
+Stars mark selected checkpoints when --weights is supplied.
 
 Usage
 -----
-    cd src && python plots/plot_results.py \\
-        --run-name yolov9s-aug-4  --weights epoch80.pt \\
-        --run-name yolov9s-aas-25 --weights epoch35.pt \\
-        --label Baseline --label AAS --style ppt
-
-    # Training curves only (no weights → no bar chart, no markers)
-    cd src && python plots/plot_results.py --style ppt
+    cd src && python plots/training_curves.py \\
+        --run-name yolov9s-aug-4  --weights epoch100.pt \\
+        --run-name yolov9s-aas-34 --weights epoch29.pt \\
+        --label Baseline --label "AAS + MixUp 0.3" --style ppt
 """
 
 import re
@@ -38,14 +32,12 @@ import style
 
 # ── constants ──────────────────────────────────────────────────────────────
 
-EVAL_CSV = g.RESULTS_DIR / "evaluations.csv"
-
 DEFAULT_BASELINE = "yolov9s-aug-4"
 DEFAULT_AAS      = "yolov9s-aas-25"
 
-RAW_ALPHA            = 0.20
-MARKER_SIZE_PPT      = 180
-MARKER_SIZE_REPORT   = 60
+RAW_ALPHA          = 0.20
+MARKER_SIZE_PPT    = 180
+MARKER_SIZE_REPORT = 60
 
 PALETTE: List[str] = [
     "#4C72B0",
@@ -57,25 +49,15 @@ PALETTE: List[str] = [
 
 PPT_FIGSIZE_CURVES    = (13.0, 6.5)
 REPORT_FIGSIZE_CURVES = (3.3,  6.0)  # 4×1 single IEEE column
-PPT_FIGSIZE_BAR       = (9.0,  5.0)
-
-BAR_METRICS: List[Tuple[str, str]] = [
-    ("precision", "Precision"),
-    ("recall",    "Recall"),
-    ("mAP50",     "mAP50"),
-    ("mAP50-95",  "mAP50-95"),
-]
 
 # (training_df, label, color, marker_epoch | None)
 RunData = Tuple[pd.DataFrame, str, str, Optional[int]]
 
 
-# ── shared helpers ─────────────────────────────────────────────────────────
+# ── helpers ────────────────────────────────────────────────────────────────
 
 def _smooth(series: pd.Series, window: int) -> np.ndarray:
-    return (
-        series.rolling(window, min_periods=1).mean().to_numpy(dtype=float)
-    )
+    return series.rolling(window, min_periods=1).mean().to_numpy(dtype=float)
 
 
 def _load(run_name: str) -> pd.DataFrame:
@@ -85,31 +67,8 @@ def _load(run_name: str) -> pd.DataFrame:
     return df
 
 
-def _load_eval_row(
-    eval_df: pd.DataFrame,
-    run_name: str,
-    weights: str,
-) -> pd.Series:
-    mask = (eval_df["run_name"] == run_name) & (eval_df["weights"] == weights)
-    matches = eval_df[mask]
-    if matches.empty:
-        raise SystemExit(
-            f"No evaluation row found for run_name={run_name!r},"
-            f" weights={weights!r}"
-        )
-    if len(matches) > 1:
-        print(
-            f"Warning: {len(matches)} rows match {run_name}/{weights};"
-            " using the last one"
-        )
-    return matches.iloc[-1]
-
-
 def _parse_epoch(weights: str, df: pd.DataFrame) -> Optional[int]:
-    """Return the epoch number for a weights filename.
-
-    Supports epochN.pt, last.pt, and best.pt (Ultralytics fitness).
-    """
+    """Return the 1-indexed epoch number for a weights filename."""
     stem = Path(weights).stem
     if stem == "last":
         return int(df["epoch"].iloc[-1])
@@ -130,7 +89,7 @@ def _epoch_idx(epochs: np.ndarray, epoch: int) -> int:
     return min(int(idx), len(epochs) - 1)
 
 
-# ── training curve helpers ─────────────────────────────────────────────────
+# ── plot helpers ───────────────────────────────────────────────────────────
 
 def _plot_loss(
     ax: Axes,
@@ -194,13 +153,9 @@ def _plot_metric(
     ax.legend(fontsize="small")
 
 
-# ── figure generators ──────────────────────────────────────────────────────
+# ── figure generator ───────────────────────────────────────────────────────
 
-def _generate_training_curves(
-    runs: List[RunData],
-    smooth: int,
-    styles_to_run: List[str],
-) -> None:
+def _generate(runs: List[RunData], smooth: int, styles_to_run: List[str]) -> None:
     loss_cols: List[Tuple[str, str, str]] = [
         ("train/cls_loss", "val/cls_loss", "Class loss"),
         ("train/box_loss", "val/box_loss", "Box loss"),
@@ -249,105 +204,37 @@ def _generate_training_curves(
         plt.show()
 
 
-def _generate_metrics_bar(
-    runs: List[RunData],
-    eval_rows: List[pd.Series],
-    styles_to_run: List[str],
-) -> None:
-    metric_keys   = [m[0] for m in BAR_METRICS]
-    metric_labels = [m[1] for m in BAR_METRICS]
-    n_metrics = len(BAR_METRICS)
-    n_runs    = len(runs)
-
-    values = np.array(
-        [[float(row[k]) for k in metric_keys] for row in eval_rows],
-        dtype=float,
-    )  # shape: (n_runs, n_metrics)
-
-    bar_width = 0.7 / n_runs
-    x = np.arange(n_metrics, dtype=float)
-    offsets = (np.arange(n_runs) - (n_runs - 1) / 2.0) * bar_width
-
-    for s in styles_to_run:
-        fmt = style.output_fmt(s)
-        dpi = style.save_dpi(s)
-        out = g.RESULTS_DIR / f"metrics_bar_{s}.{fmt}"
-        style.apply_style(s)
-
-        fs = PPT_FIGSIZE_BAR if s == style.PPT else style.figsize(s)
-        fig, ax = plt.subplots(figsize=fs)
-
-        for i, run_vals in enumerate(values):
-            _df, label, color, _epoch = runs[i]
-            bars = ax.bar(
-                x + offsets[i], run_vals,
-                width=bar_width,
-                color=color,
-                label=label,
-                zorder=3,
-            )
-            for bar, val in zip(bars, run_vals):
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    val + 0.008,
-                    f"{val:.3f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=plt.rcParams.get("xtick.labelsize", 7),
-                    color=color,
-                )
-
-        ax.set_xticks(x)
-        ax.set_xticklabels(metric_labels)
-        ax.set_ylabel("Score")
-        ax.set_ylim(0, 1.05)
-        ax.yaxis.grid(True, zorder=0, alpha=0.4)
-        ax.set_axisbelow(True)
-        ax.legend()
-
-        plt.tight_layout()
-        out.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(out, dpi=dpi, bbox_inches="tight")
-        print(f"Saved → {out}")
-        plt.show()
-
-
 # ── CLI ────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument(
-        "--run-name",
-        dest="run_names",
-        action="append",
-        default=[],
-        metavar="NAME",
-        help="Run name under runs/ (repeatable). "
-             f"Defaults to {DEFAULT_BASELINE} + {DEFAULT_AAS}.",
+    p = argparse.ArgumentParser(
+        description="Plot training curves for one or more runs."
     )
     p.add_argument(
-        "--weights",
-        dest="weights_list",
-        action="append",
-        default=[],
+        "--run-name", dest="run_names", action="append", default=[],
+        metavar="NAME",
+        help=(
+            "Run name under runs/ (repeatable). "
+            f"Defaults to {DEFAULT_BASELINE} + {DEFAULT_AAS}."
+        ),
+    )
+    p.add_argument(
+        "--weights", dest="weights_list", action="append", default=[],
         metavar="WEIGHTS",
         help=(
             "Weights file (repeatable; must match --run-name count if given). "
-            "Adds a star marker to curves and generates the bar chart. "
+            "Adds a star marker at the selected checkpoint. "
             "Supports epochN.pt / last.pt / best.pt."
         ),
     )
     p.add_argument(
-        "--label",
-        dest="labels",
-        action="append",
-        default=[],
+        "--label", dest="labels", action="append", default=[],
         metavar="LABEL",
-        help="Legend label for each run (optional; defaults to run name)",
+        help="Legend label for each run (defaults to run name).",
     )
     p.add_argument(
         "--smooth", type=int, default=10,
-        help="Rolling-average window in epochs (default: 10; use 1 to disable)",
+        help="Rolling-average window in epochs (default: 10; use 1 to disable).",
     )
     p.add_argument(
         "--style", choices=style.STYLES, default=None,
@@ -377,20 +264,7 @@ def main() -> None:
         runs.append((df, label, color, marker_epoch))
 
     styles_to_run = [args.style] if args.style else style.STYLES
-
-    _generate_training_curves(runs, args.smooth, styles_to_run)
-
-    if args.weights_list:
-        if not EVAL_CSV.exists():
-            print(f"Warning: {EVAL_CSV} not found — skipping bar chart.")
-        else:
-            eval_df = pd.read_csv(EVAL_CSV)
-            eval_df.columns = eval_df.columns.str.strip()
-            eval_rows = [
-                _load_eval_row(eval_df, rn, w)
-                for rn, w in zip(run_names, args.weights_list)
-            ]
-            _generate_metrics_bar(runs, eval_rows, styles_to_run)
+    _generate(runs, args.smooth, styles_to_run)
 
 
 if __name__ == "__main__":
