@@ -5,8 +5,6 @@ cars in aerial drone footage captured at 120–250 m altitude under Nordic winte
 
 Single detection class: `car`.
 
-W&B project: [d7047e-group12 / Project-NVD](https://wandb.ai/d7047e-group12/Project-NVD)
-
 ---
 
 ## Table of Contents
