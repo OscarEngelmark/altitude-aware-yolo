@@ -40,7 +40,7 @@ _COL_WIDTH: Dict[str, float] = {
 }
 
 _FMT: Dict[str, str] = {REPORT: "pdf", PPT: "png"}
-_DPI: Dict[str, int] = {REPORT: 150, PPT: 300}
+_DPI: Dict[str, int] = {REPORT: 150, PPT: 600}
 
 
 def apply_style(style: str) -> None:
